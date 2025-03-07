@@ -7,9 +7,10 @@ import {
   Bell, Settings, User, ChevronLeft, ChevronRight, 
   Bus, LogOut
 } from 'lucide-react';
-import { NavLink, useLocation } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import LanguageSelector from './LanguageSelector';
+import { toast } from 'sonner';
 
 type SidebarProps = {
   className?: string;
@@ -19,6 +20,7 @@ const Sidebar: React.FC<SidebarProps> = ({ className }) => {
   const { t } = useLanguage();
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
+  const navigate = useNavigate();
 
   const navItems = [
     { path: '/', icon: Home, label: t('navigation.home') },
@@ -33,6 +35,12 @@ const Sidebar: React.FC<SidebarProps> = ({ className }) => {
     { path: '/settings', icon: Settings, label: t('navigation.settings') },
     { path: '/profile', icon: User, label: t('navigation.profile') },
   ];
+
+  const handleLogout = () => {
+    // Dans une application réelle, vous effectueriez ici la déconnexion
+    toast.success(t('login.logoutSuccess'));
+    navigate('/');
+  };
 
   return (
     <aside
@@ -120,6 +128,7 @@ const Sidebar: React.FC<SidebarProps> = ({ className }) => {
                 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800',
                 collapsed ? 'h-10 w-10' : 'gap-2'
               )}
+              onClick={handleLogout}
             >
               <LogOut className="h-4 w-4" />
               {!collapsed && <span>{t('common.logout')}</span>}

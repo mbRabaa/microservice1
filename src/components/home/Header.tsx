@@ -34,7 +34,7 @@ const Header: React.FC<HeaderProps> = ({ onOpenLoginModal }) => {
         
         <div className="flex items-center gap-3">
           <LanguageSelector />
-          <Button onClick={onOpenLoginModal}>
+          <Button onClick={onOpenLoginModal} variant="outline" className="border-tunisbus text-tunisbus hover:bg-tunisbus/10">
             {t('common.adminLogin')}
           </Button>
         </div>

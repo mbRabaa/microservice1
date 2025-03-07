@@ -85,7 +85,7 @@ const LoginModal: React.FC<LoginModalProps> = ({ open, onOpenChange }) => {
               />
             </div>
           </div>
-          <Button type="submit" className="w-full" disabled={isLoading}>
+          <Button type="submit" className="w-full bg-tunisbus hover:bg-tunisbus-dark" disabled={isLoading}>
             {isLoading ? t('login.processing') : t('login.submit')}
           </Button>
         </form>
