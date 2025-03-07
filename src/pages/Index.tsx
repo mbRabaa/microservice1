@@ -23,17 +23,19 @@ const Index: React.FC = () => {
 
   return (
     <div className={cn("min-h-screen", locale === 'ar' ? 'text-right' : 'text-left')}>
-      {/* Header */}
+      {/* Header avec Sidebar */}
       <Header onOpenLoginModal={handleOpenLoginModal} />
 
-      {/* Hero Section */}
-      <HeroSection loaded={loaded} />
+      {/* Hero Section - ajusté pour prendre en compte le Sidebar */}
+      <div className="ml-20 lg:ml-64">
+        <HeroSection loaded={loaded} />
 
-      {/* Features Section */}
-      <FeaturesSection loaded={loaded} />
+        {/* Features Section */}
+        <FeaturesSection loaded={loaded} />
 
-      {/* Footer */}
-      <Footer />
+        {/* Footer */}
+        <Footer />
+      </div>
 
       {/* Login Modal */}
       <LoginModal 

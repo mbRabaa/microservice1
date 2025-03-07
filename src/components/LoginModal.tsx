@@ -49,7 +49,7 @@ const LoginModal: React.FC<LoginModalProps> = ({ open, onOpenChange }) => {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[425px]">
-        <DialogHeader>
+        <DialogHeader className="text-center">
           <DialogTitle className="text-2xl font-bold">
             {t('login.title')}
           </DialogTitle>
@@ -57,9 +57,9 @@ const LoginModal: React.FC<LoginModalProps> = ({ open, onOpenChange }) => {
             {t('login.description')}
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={handleLogin} className="space-y-4 pt-4">
+        <form onSubmit={handleLogin} className="space-y-4 pt-4 text-center">
           <div className="space-y-2">
-            <Label htmlFor="username">{t('login.username')}</Label>
+            <Label htmlFor="username" className="text-center block">{t('login.username')}</Label>
             <div className="relative">
               <User className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
               <Input
@@ -72,7 +72,7 @@ const LoginModal: React.FC<LoginModalProps> = ({ open, onOpenChange }) => {
             </div>
           </div>
           <div className="space-y-2">
-            <Label htmlFor="password">{t('login.password')}</Label>
+            <Label htmlFor="password" className="text-center block">{t('login.password')}</Label>
             <div className="relative">
               <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
               <Input
@@ -89,9 +89,6 @@ const LoginModal: React.FC<LoginModalProps> = ({ open, onOpenChange }) => {
             {isLoading ? t('login.processing') : t('login.submit')}
           </Button>
         </form>
-        <div className="text-sm text-center text-slate-500 pt-2">
-          Pour cette démo: username = admin, password = admin123
-        </div>
       </DialogContent>
     </Dialog>
   );

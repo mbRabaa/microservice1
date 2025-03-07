@@ -4,7 +4,7 @@ import { useLanguage } from '@/context/LanguageContext';
 import { cn } from '@/lib/utils';
 import { 
   Home, Gauge, MapPin, CalendarCheck, CreditCard, 
-  Bell, Settings, User, ChevronLeft, ChevronRight, 
+  Bell, Settings, ChevronLeft, ChevronRight, 
   Bus, LogOut
 } from 'lucide-react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
@@ -33,7 +33,6 @@ const Sidebar: React.FC<SidebarProps> = ({ className }) => {
 
   const bottomNavItems = [
     { path: '/settings', icon: Settings, label: t('navigation.settings') },
-    { path: '/profile', icon: User, label: t('navigation.profile') },
   ];
 
   const handleLogout = () => {
