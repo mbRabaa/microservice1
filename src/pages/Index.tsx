@@ -8,14 +8,24 @@ import { Search, Bus, TicketCheck, Bell, CreditCard, MapPin } from 'lucide-react
 import LanguageSelector from '@/components/LanguageSelector';
 import { cn } from '@/lib/utils';
 import { tunisianProvinces } from '@/utils/data';
+import LoginModal from '@/components/LoginModal';
 
 const Index: React.FC = () => {
   const { t, locale } = useLanguage();
   const [loaded, setLoaded] = useState(false);
+  const [loginModalOpen, setLoginModalOpen] = useState(false);
+  const [departure, setDeparture] = useState('');
+  const [destination, setDestination] = useState('');
 
   useEffect(() => {
     setLoaded(true);
   }, []);
+
+  const handleSearch = () => {
+    // Simuler une recherche
+    console.log('Recherche:', { departure, destination });
+    // Dans une application réelle, on redirigerait vers une page de résultats
+  };
 
   return (
     <div className={cn("min-h-screen", locale === 'ar' ? 'text-right' : 'text-left')}>
@@ -36,17 +46,12 @@ const Index: React.FC = () => {
             <Link to="/routes" className="text-sm font-medium hover:text-tunisbus transition-colors">
               {t('navigation.routes')}
             </Link>
-            <Link to="/admin" className="text-sm font-medium hover:text-tunisbus transition-colors">
-              {t('navigation.admin')}
-            </Link>
           </nav>
           
           <div className="flex items-center gap-3">
             <LanguageSelector />
-            <Button asChild>
-              <Link to="/login">
-                {t('common.login')}
-              </Link>
+            <Button onClick={() => setLoginModalOpen(true)}>
+              {t('common.adminLogin')}
             </Button>
           </div>
         </div>
@@ -54,7 +59,7 @@ const Index: React.FC = () => {
 
       {/* Hero Section */}
       <section className="pt-32 pb-24 relative overflow-hidden">
-        <div className="absolute inset-0 z-0 bg-gradient-to-br from-sky-50 to-indigo-50 dark:from-slate-900 dark:to-slate-800">
+        <div className="absolute inset-0 z-0 bg-gradient-to-br from-purple-50 to-indigo-50 dark:from-slate-900 dark:to-slate-800">
           <div className="absolute top-20 right-10 w-64 h-64 bg-tunisbus/10 rounded-full filter blur-3xl animate-pulse-light"></div>
           <div className="absolute bottom-10 left-20 w-72 h-72 bg-tunisbus/5 rounded-full filter blur-3xl animate-pulse-light" style={{ animationDelay: '2s' }}></div>
         </div>
@@ -104,7 +109,11 @@ const Index: React.FC = () => {
                   </label>
                   <div className="relative">
                     <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-slate-400" />
-                    <select className="pl-10 w-full h-11 rounded-md border border-slate-200 bg-white dark:bg-slate-900 dark:border-slate-700 focus:ring-2 focus:ring-tunisbus">
+                    <select 
+                      className="pl-10 w-full h-11 rounded-md border border-slate-200 bg-white dark:bg-slate-900 dark:border-slate-700 focus:ring-2 focus:ring-tunisbus"
+                      value={departure}
+                      onChange={(e) => setDeparture(e.target.value)}
+                    >
                       <option value="">{t('admin.form.selectDeparture')}</option>
                       {tunisianProvinces.map(province => (
                         <option key={`dep-${province.id}`} value={province.name}>
@@ -121,7 +130,11 @@ const Index: React.FC = () => {
                   </label>
                   <div className="relative">
                     <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-slate-400" />
-                    <select className="pl-10 w-full h-11 rounded-md border border-slate-200 bg-white dark:bg-slate-900 dark:border-slate-700 focus:ring-2 focus:ring-tunisbus">
+                    <select 
+                      className="pl-10 w-full h-11 rounded-md border border-slate-200 bg-white dark:bg-slate-900 dark:border-slate-700 focus:ring-2 focus:ring-tunisbus"
+                      value={destination}
+                      onChange={(e) => setDestination(e.target.value)}
+                    >
                       <option value="">{t('admin.form.selectDestination')}</option>
                       {tunisianProvinces.map(province => (
                         <option key={`dest-${province.id}`} value={province.name}>
@@ -132,22 +145,10 @@ const Index: React.FC = () => {
                   </div>
                 </div>
                 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="flex flex-col gap-2">
-                    <label className="text-sm font-medium">
-                      {t('admin.form.date')}
-                    </label>
-                    <Input type="date" className="h-11" />
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <label className="text-sm font-medium">
-                      {t('admin.form.time')}
-                    </label>
-                    <Input type="time" className="h-11" />
-                  </div>
-                </div>
-                
-                <Button className="w-full h-11 mt-2 bg-tunisbus hover:bg-tunisbus-dark">
+                <Button 
+                  className="w-full h-11 mt-2 bg-tunisbus hover:bg-tunisbus-dark"
+                  onClick={handleSearch}
+                >
                   <Search className="h-4 w-4 mr-2" />
                   {t('common.search')}
                 </Button>
@@ -245,24 +246,18 @@ const Index: React.FC = () => {
               </span>
             </div>
             
-            <div className="flex gap-6">
-              <Link to="/" className="text-sm text-slate-600 dark:text-slate-300 hover:text-tunisbus transition-colors">
-                {t('navigation.home')}
-              </Link>
-              <Link to="/routes" className="text-sm text-slate-600 dark:text-slate-300 hover:text-tunisbus transition-colors">
-                {t('navigation.routes')}
-              </Link>
-              <Link to="/admin" className="text-sm text-slate-600 dark:text-slate-300 hover:text-tunisbus transition-colors">
-                {t('navigation.admin')}
-              </Link>
-            </div>
-            
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-4 md:mt-0">
-              &copy; 2023 TunisBus. All rights reserved.
+              &copy; {new Date().getFullYear()} TunisBus. All rights reserved.
             </p>
           </div>
         </div>
       </footer>
+
+      {/* Login Modal */}
+      <LoginModal 
+        open={loginModalOpen} 
+        onOpenChange={setLoginModalOpen}
+      />
     </div>
   );
 };

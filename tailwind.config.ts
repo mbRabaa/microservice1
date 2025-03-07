@@ -64,9 +64,9 @@ export default {
 					ring: 'hsl(var(--sidebar-ring))'
 				},
 				tunisbus: {
-					light: '#E0F2FE',
-					DEFAULT: '#0EA5E9',
-					dark: '#0369A1'
+					light: '#E5DEFF',
+					DEFAULT: '#9b87f5',
+					dark: '#7B68EE'
 				},
 			},
 			borderRadius: {
