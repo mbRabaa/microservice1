@@ -29,17 +29,22 @@ const Index: React.FC = () => {
   const scrollToFeatures = () => {
     featuresRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
+  
+  const scrollToRoutes = () => {
+    availableRoutesRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
 
   const handleLoginSuccess = () => {
     navigate('/admin');
   };
 
   return (
-    <div className={cn("min-h-screen", locale === 'ar' ? 'text-right' : 'text-left')}>
+    <div className={cn("min-h-screen bg-gradient-to-br from-purple-50 to-indigo-50", locale === 'ar' ? 'text-right' : 'text-left')}>
       {/* Header avec Sidebar */}
       <Header 
         onOpenLoginModal={handleOpenLoginModal} 
         onAboutClick={scrollToFeatures}
+        onRoutesClick={scrollToRoutes}
       />
 
       {/* Hero Section - ajusté pour prendre en compte le Sidebar */}
@@ -47,12 +52,12 @@ const Index: React.FC = () => {
         <HeroSection loaded={loaded} />
 
         {/* Features Section */}
-        <div ref={featuresRef}>
+        <div ref={featuresRef} id="features">
           <FeaturesSection loaded={loaded} />
         </div>
 
         {/* Available Routes Section */}
-        <div ref={availableRoutesRef}>
+        <div ref={availableRoutesRef} id="available-routes">
           <AvailableRoutes />
         </div>
 

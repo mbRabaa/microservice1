@@ -205,7 +205,7 @@ const AdminDashboard: React.FC = () => {
         {/* Weekly Statistics */}
         <Card className="mb-8 border shadow-sm">
           <CardHeader>
-            <CardTitle>{t('admin.weeklyStats')}</CardTitle>
+            <CardTitle>Statistiques hebdomadaires</CardTitle>
           </CardHeader>
           <CardContent>
             <WeeklyStats />
@@ -241,7 +241,7 @@ const AdminDashboard: React.FC = () => {
           <Card className="border shadow-sm">
             <CardHeader>
               <div className="flex justify-between items-center">
-                <CardTitle>{t('admin.routesManagement')}</CardTitle>
+                <CardTitle>Gestion des trajets</CardTitle>
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
                   <Input 

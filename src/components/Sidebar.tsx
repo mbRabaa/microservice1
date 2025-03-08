@@ -23,13 +23,17 @@ const Sidebar: React.FC<SidebarProps> = ({ className }) => {
   const navigate = useNavigate();
   
   const handleDashboardClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    // Si nous ne sommes pas déjà sur la page admin, ouvrir le modal de connexion
     if (location.pathname !== '/admin') {
       e.preventDefault();
+      // Naviguer vers la page d'accueil
       navigate('/');
+      // Ouvrir le modal de connexion après un court délai
       setTimeout(() => {
-        document.querySelector('[data-modal-trigger="login"]')?.dispatchEvent(
-          new MouseEvent('click', { bubbles: true })
-        );
+        const loginButton = document.querySelector('.border-tunisbus.text-tunisbus');
+        if (loginButton) {
+          (loginButton as HTMLElement).click();
+        }
       }, 100);
     }
   };
@@ -103,7 +107,6 @@ const Sidebar: React.FC<SidebarProps> = ({ className }) => {
                     collapsed ? 'justify-center' : 'gap-3'
                   )}
                   onClick={item.onClick}
-                  data-modal-trigger={item.path === '/admin' ? 'login' : undefined}
                 >
                   <item.icon className={cn('flex-shrink-0', collapsed ? 'h-6 w-6' : 'h-5 w-5')} />
                   {!collapsed && <span>{item.label}</span>}

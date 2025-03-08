@@ -9,9 +9,10 @@ import Sidebar from '@/components/Sidebar';
 interface HeaderProps {
   onOpenLoginModal: () => void;
   onAboutClick: () => void;
+  onRoutesClick: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ onOpenLoginModal, onAboutClick }) => {
+const Header: React.FC<HeaderProps> = ({ onOpenLoginModal, onAboutClick, onRoutesClick }) => {
   const { t } = useLanguage();
 
   return (
@@ -33,6 +34,13 @@ const Header: React.FC<HeaderProps> = ({ onOpenLoginModal, onAboutClick }) => {
               className="text-slate-700 hover:text-tunisbus hover:bg-tunisbus/10"
             >
               {t('navigation.about')}
+            </Button>
+            <Button 
+              onClick={onRoutesClick} 
+              variant="ghost" 
+              className="text-slate-700 hover:text-tunisbus hover:bg-tunisbus/10"
+            >
+              {t('navigation.routes')}
             </Button>
             <LanguageSelector />
             <Button 
