@@ -26,6 +26,7 @@ export const translations: Translations = {
       submit: 'Soumettre',
       close: 'Fermer',
       logout: 'Déconnexion',
+      searchPlaceholder: 'Rechercher...',
     },
     login: {
       title: 'Connexion Administrateur',
@@ -36,6 +37,7 @@ export const translations: Translations = {
       processing: 'Connexion en cours...',
       success: 'Connexion réussie!',
       error: 'Identifiants incorrects. Veuillez réessayer.',
+      logoutSuccess: 'Déconnexion réussie!',
     },
     navigation: {
       home: 'Accueil',
@@ -47,11 +49,12 @@ export const translations: Translations = {
       notifications: 'Notifications',
       settings: 'Paramètres',
       profile: 'Profil',
+      about: 'À propos',
     },
     home: {
       hero: {
-        title: 'Réservez vos billets de bus en ligne',
-        subtitle: 'Le moyen le plus simple de voyager à travers la Tunisie',
+        title: 'Réservez vos billets de bus en quelques clics',
+        subtitle: 'Voyagez en toute simplicité à travers la Tunisie avec TunisBus',
         cta: 'Réserver maintenant',
         searchPlaceholder: 'Trouvez votre trajet',
       },
@@ -81,6 +84,12 @@ export const translations: Translations = {
       editRoute: 'Modifier le trajet',
       deleteRoute: 'Supprimer le trajet',
       routesList: 'Liste des trajets',
+      routesManagement: 'Gestion des trajets',
+      weeklyStats: 'Statistiques hebdomadaires',
+      reservationsChart: 'Réservations par jour',
+      revenueChart: 'Revenus par jour',
+      reservations: 'Réservations',
+      revenue: 'Revenus',
       form: {
         departure: 'Départ',
         destination: 'Destination',
@@ -108,6 +117,12 @@ export const translations: Translations = {
         routeDeleted: 'Trajet supprimé avec succès',
       },
     },
+    routes: {
+      popularRoutes: 'Trajets populaires',
+      showAll: 'Afficher tout',
+      book: 'Réserver',
+      availableSeats: '{seats}/50 places',
+    },
   },
   en: {
     common: {
@@ -123,6 +138,7 @@ export const translations: Translations = {
       submit: 'Submit',
       close: 'Close',
       logout: 'Logout',
+      searchPlaceholder: 'Search...',
     },
     login: {
       title: 'Admin Login',
@@ -133,6 +149,7 @@ export const translations: Translations = {
       processing: 'Logging in...',
       success: 'Login successful!',
       error: 'Invalid credentials. Please try again.',
+      logoutSuccess: 'Logout successful!',
     },
     navigation: {
       home: 'Home',
@@ -144,11 +161,12 @@ export const translations: Translations = {
       notifications: 'Notifications',
       settings: 'Settings',
       profile: 'Profile',
+      about: 'About',
     },
     home: {
       hero: {
-        title: 'Book Your Bus Tickets Online',
-        subtitle: 'The easiest way to travel across Tunisia',
+        title: 'Book Your Bus Tickets in a Few Clicks',
+        subtitle: 'Travel with ease across Tunisia with TunisBus',
         cta: 'Book Now',
         searchPlaceholder: 'Find your route',
       },
@@ -178,6 +196,12 @@ export const translations: Translations = {
       editRoute: 'Edit Route',
       deleteRoute: 'Delete Route',
       routesList: 'Routes List',
+      routesManagement: 'Routes Management',
+      weeklyStats: 'Weekly Statistics',
+      reservationsChart: 'Daily Reservations',
+      revenueChart: 'Daily Revenue',
+      reservations: 'Reservations',
+      revenue: 'Revenue',
       form: {
         departure: 'Departure',
         destination: 'Destination',
@@ -205,6 +229,12 @@ export const translations: Translations = {
         routeDeleted: 'Route deleted successfully',
       },
     },
+    routes: {
+      popularRoutes: 'Popular Routes',
+      showAll: 'Show all',
+      book: 'Book',
+      availableSeats: '{seats}/50 seats',
+    },
   },
   ar: {
     common: {
@@ -220,6 +250,7 @@ export const translations: Translations = {
       submit: 'إرسال',
       close: 'إغلاق',
       logout: 'تسجيل الخروج',
+      searchPlaceholder: 'بحث...',
     },
     login: {
       title: 'تسجيل دخول المشرف',
@@ -230,6 +261,7 @@ export const translations: Translations = {
       processing: 'جاري تسجيل الدخول...',
       success: 'تم تسجيل الدخول بنجاح!',
       error: 'بيانات غير صحيحة. يرجى المحاولة مرة أخرى.',
+      logoutSuccess: 'تم تسجيل الخروج بنجاح!',
     },
     navigation: {
       home: 'الرئيسية',
@@ -241,11 +273,12 @@ export const translations: Translations = {
       notifications: 'الإشعارات',
       settings: 'الإعدادات',
       profile: 'الملف الشخصي',
+      about: 'حول',
     },
     home: {
       hero: {
-        title: 'احجز تذاكر الحافلة عبر الإنترنت',
-        subtitle: 'أسهل طريقة للسفر عبر تونس',
+        title: 'احجز تذاكر الحافلة في بضع نقرات',
+        subtitle: 'سافر بسهولة عبر تونس مع تونس باص',
         cta: 'احجز الآن',
         searchPlaceholder: 'ابحث عن مسارك',
       },
@@ -275,6 +308,12 @@ export const translations: Translations = {
       editRoute: 'تعديل المسار',
       deleteRoute: 'حذف المسار',
       routesList: 'قائمة المسارات',
+      routesManagement: 'إدارة المسارات',
+      weeklyStats: 'إحصائيات أسبوعية',
+      reservationsChart: 'الحجوزات اليومية',
+      revenueChart: 'الإيرادات اليومية',
+      reservations: 'الحجوزات',
+      revenue: 'الإيرادات',
       form: {
         departure: 'المغادرة',
         destination: 'الوجهة',
@@ -301,6 +340,12 @@ export const translations: Translations = {
         routeUpdated: 'تم تحديث المسار بنجاح',
         routeDeleted: 'تم حذف المسار بنجاح',
       },
+    },
+    routes: {
+      popularRoutes: 'المسارات الشعبية',
+      showAll: 'عرض الكل',
+      book: 'حجز',
+      availableSeats: '{seats}/50 مقعد',
     },
   },
 };

@@ -1,12 +1,12 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useLanguage } from '@/context/LanguageContext';
 import Layout from '@/components/Layout';
 import RouteForm from '@/components/RouteForm';
 import RouteTable from '@/components/RouteTable';
 import { BusRoute, mockRoutes } from '@/utils/data';
 import { Button } from '@/components/ui/button';
-import { Plus, X, Users, Calendar, DollarSign, PercentCircle } from 'lucide-react';
+import { Plus, X, Users, Calendar, DollarSign, PercentCircle, Search } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   AlertDialog,
@@ -20,17 +20,43 @@ import {
 } from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
+import WeeklyStats from '@/components/WeeklyStats';
+import { Input } from '@/components/ui/input';
 
 const AdminDashboard: React.FC = () => {
   const { t } = useLanguage();
   const navigate = useNavigate();
   const [routes, setRoutes] = useState<BusRoute[]>(mockRoutes);
+  const [filteredRoutes, setFilteredRoutes] = useState<BusRoute[]>(mockRoutes);
   const [showForm, setShowForm] = useState(false);
   const [editingRouteId, setEditingRouteId] = useState<string | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deletingRouteId, setDeletingRouteId] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
 
   const currentlyEditingRoute = routes.find(route => route.id === editingRouteId);
+
+  useEffect(() => {
+    handleSearch();
+  }, [searchTerm, routes]);
+
+  const handleSearch = () => {
+    if (!searchTerm.trim()) {
+      setFilteredRoutes(routes);
+      return;
+    }
+    
+    const filtered = routes.filter(route => 
+      route.departure.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      route.destination.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      new Date(route.date).toLocaleDateString().includes(searchTerm) ||
+      route.time.includes(searchTerm) ||
+      route.price.toString().includes(searchTerm) ||
+      route.availableSeats.toString().includes(searchTerm)
+    );
+    
+    setFilteredRoutes(filtered);
+  };
 
   const handleAddRoute = () => {
     setEditingRouteId(null);
@@ -176,6 +202,16 @@ const AdminDashboard: React.FC = () => {
           </Card>
         </div>
 
+        {/* Weekly Statistics */}
+        <Card className="mb-8 border shadow-sm">
+          <CardHeader>
+            <CardTitle>{t('admin.weeklyStats')}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <WeeklyStats />
+          </CardContent>
+        </Card>
+
         {showForm ? (
           <Card className="mb-8 border shadow-sm animate-fade-in">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -207,17 +243,20 @@ const AdminDashboard: React.FC = () => {
               <div className="flex justify-between items-center">
                 <CardTitle>{t('admin.routesManagement')}</CardTitle>
                 <div className="relative">
-                  <input 
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  <Input 
                     type="text" 
                     placeholder="Rechercher des trajets..."
-                    className="w-64 py-2 px-4 rounded-full text-sm border border-gray-200 focus:outline-none focus:ring-2 focus:ring-tunisbus"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-64 py-2 pl-10 pr-4 rounded-full text-sm border border-gray-200 focus:outline-none focus:ring-2 focus:ring-tunisbus"
                   />
                 </div>
               </div>
             </CardHeader>
             <CardContent>
               <RouteTable
-                routes={routes}
+                routes={filteredRoutes}
                 onEdit={handleEditRoute}
                 onDelete={handleDeleteClick}
               />

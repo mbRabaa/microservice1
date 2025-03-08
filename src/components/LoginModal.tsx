@@ -18,9 +18,10 @@ import { Lock, User } from 'lucide-react';
 type LoginModalProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onLoginSuccess?: () => void;
 };
 
-const LoginModal: React.FC<LoginModalProps> = ({ open, onOpenChange }) => {
+const LoginModal: React.FC<LoginModalProps> = ({ open, onOpenChange, onLoginSuccess }) => {
   const { t } = useLanguage();
   const navigate = useNavigate();
   const [username, setUsername] = useState('');
@@ -38,7 +39,12 @@ const LoginModal: React.FC<LoginModalProps> = ({ open, onOpenChange }) => {
       if (username === 'admin' && password === 'admin123') {
         toast.success(t('login.success'));
         onOpenChange(false);
-        navigate('/admin');
+        
+        if (onLoginSuccess) {
+          onLoginSuccess();
+        } else {
+          navigate('/admin');
+        }
       } else {
         toast.error(t('login.error'));
       }

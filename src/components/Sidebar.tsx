@@ -21,10 +21,27 @@ const Sidebar: React.FC<SidebarProps> = ({ className }) => {
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
+  
+  const handleDashboardClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (location.pathname !== '/admin') {
+      e.preventDefault();
+      navigate('/');
+      setTimeout(() => {
+        document.querySelector('[data-modal-trigger="login"]')?.dispatchEvent(
+          new MouseEvent('click', { bubbles: true })
+        );
+      }, 100);
+    }
+  };
 
   const navItems = [
     { path: '/', icon: Home, label: t('navigation.home') },
-    { path: '/admin', icon: Gauge, label: t('navigation.dashboard') },
+    { 
+      path: '/admin', 
+      icon: Gauge, 
+      label: t('navigation.dashboard'),
+      onClick: handleDashboardClick 
+    },
     { path: '/routes', icon: MapPin, label: t('navigation.routes') },
     { path: '/reservations', icon: CalendarCheck, label: t('navigation.reservations') },
     { path: '/payments', icon: CreditCard, label: t('navigation.payments') },
@@ -85,6 +102,8 @@ const Sidebar: React.FC<SidebarProps> = ({ className }) => {
                       : 'text-slate-600 dark:text-slate-300',
                     collapsed ? 'justify-center' : 'gap-3'
                   )}
+                  onClick={item.onClick}
+                  data-modal-trigger={item.path === '/admin' ? 'login' : undefined}
                 >
                   <item.icon className={cn('flex-shrink-0', collapsed ? 'h-6 w-6' : 'h-5 w-5')} />
                   {!collapsed && <span>{item.label}</span>}

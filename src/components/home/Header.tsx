@@ -8,9 +8,10 @@ import Sidebar from '@/components/Sidebar';
 
 interface HeaderProps {
   onOpenLoginModal: () => void;
+  onAboutClick: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ onOpenLoginModal }) => {
+const Header: React.FC<HeaderProps> = ({ onOpenLoginModal, onAboutClick }) => {
   const { t } = useLanguage();
 
   return (
@@ -26,8 +27,19 @@ const Header: React.FC<HeaderProps> = ({ onOpenLoginModal }) => {
           </div>
           
           <div className="flex items-center gap-3">
+            <Button 
+              onClick={onAboutClick} 
+              variant="ghost" 
+              className="text-slate-700 hover:text-tunisbus hover:bg-tunisbus/10"
+            >
+              {t('navigation.about')}
+            </Button>
             <LanguageSelector />
-            <Button onClick={onOpenLoginModal} variant="outline" className="border-tunisbus text-tunisbus hover:bg-tunisbus/10">
+            <Button 
+              onClick={onOpenLoginModal} 
+              variant="outline" 
+              className="border-tunisbus text-tunisbus hover:bg-tunisbus/10"
+            >
               {t('common.adminLogin')}
             </Button>
           </div>
