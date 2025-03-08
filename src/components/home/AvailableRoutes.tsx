@@ -8,7 +8,7 @@ import { Search, ArrowRight, Calendar, Users } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 
 const AvailableRoutes: React.FC = () => {
-  const { t, locale } = useLanguage();
+  const { t } = useLanguage();
   const [searchTerm, setSearchTerm] = useState('');
   const [filteredRoutes, setFilteredRoutes] = useState(mockRoutes);
 
@@ -67,7 +67,7 @@ const AvailableRoutes: React.FC = () => {
                     <div className="space-y-1">
                       <span className="text-sm text-muted-foreground">{t('admin.form.departure')}</span>
                       <h3 className="text-lg font-semibold">{route.departure}</h3>
-                      <p className="text-lg">{route.time.split('-')[0].trim()}</p>
+                      <p className="text-lg">{route.time}</p>
                     </div>
                     
                     <div className="flex items-center flex-1 justify-center px-4">
@@ -85,7 +85,6 @@ const AvailableRoutes: React.FC = () => {
                     <div className="space-y-1 text-right">
                       <span className="text-sm text-muted-foreground">{t('admin.form.destination')}</span>
                       <h3 className="text-lg font-semibold">{route.destination}</h3>
-                      <p className="text-lg">{route.time.split('-')[1].trim()}</p>
                     </div>
                   </div>
                   
