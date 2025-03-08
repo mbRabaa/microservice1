@@ -40,14 +40,14 @@ const Index: React.FC = () => {
 
   return (
     <div className={cn("min-h-screen bg-gradient-to-br from-purple-50 to-indigo-50", locale === 'ar' ? 'text-right' : 'text-left')}>
-      {/* Header avec Sidebar */}
+      {/* Header */}
       <Header 
         onOpenLoginModal={handleOpenLoginModal} 
         onAboutClick={scrollToFeatures}
         onRoutesClick={scrollToRoutes}
       />
 
-      {/* Hero Section - ajusté pour prendre en compte le Sidebar */}
+      {/* Main content with sidebar space */}
       <div className="ml-20 lg:ml-64">
         <HeroSection loaded={loaded} />
 

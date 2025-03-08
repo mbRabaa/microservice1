@@ -12,7 +12,7 @@ const FeaturesSection: React.FC<FeaturesSectionProps> = ({ loaded }) => {
   const { t } = useLanguage();
 
   return (
-    <section className="py-20 bg-white dark:bg-slate-900">
+    <section id="features" className="py-20 bg-white dark:bg-slate-900">
       <div className="container mx-auto px-4">
         <div className="text-center mb-16">
           <h2 className="text-3xl font-bold">
@@ -83,6 +83,16 @@ const FeaturesSection: React.FC<FeaturesSectionProps> = ({ loaded }) => {
             <p className="text-slate-600 dark:text-slate-300">
               {t('home.features.routeManagement.description')}
             </p>
+          </div>
+        </div>
+        
+        <div className="mt-16 max-w-4xl mx-auto">
+          <div className="rounded-xl overflow-hidden shadow-xl fancy-border-gradient">
+            <img 
+              src="https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1170&q=80" 
+              alt="Bus travel in Tunisia" 
+              className="w-full h-auto object-cover"
+            />
           </div>
         </div>
       </div>

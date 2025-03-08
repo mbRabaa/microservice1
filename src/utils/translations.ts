@@ -1,4 +1,3 @@
-
 export type LocaleType = 'fr' | 'en' | 'ar';
 
 interface TranslationItem {
@@ -120,6 +119,7 @@ export const translations: Translations = {
     routes: {
       popularRoutes: 'Trajets populaires',
       showAll: 'Afficher tout',
+      showLess: 'Afficher moins',
       book: 'Réserver',
       availableSeats: '{seats}/50 places',
     },
@@ -232,6 +232,7 @@ export const translations: Translations = {
     routes: {
       popularRoutes: 'Popular Routes',
       showAll: 'Show all',
+      showLess: 'Show less',
       book: 'Book',
       availableSeats: '{seats}/50 seats',
     },
@@ -344,6 +345,7 @@ export const translations: Translations = {
     routes: {
       popularRoutes: 'المسارات الشعبية',
       showAll: 'عرض الكل',
+      showLess: 'عرض أقل',
       book: 'حجز',
       availableSeats: '{seats}/50 مقعد',
     },

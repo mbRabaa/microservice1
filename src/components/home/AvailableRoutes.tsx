@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useLanguage } from '@/context/LanguageContext';
 import { mockRoutes } from '@/utils/data';
 import { Input } from '@/components/ui/input';
@@ -11,6 +11,16 @@ const AvailableRoutes: React.FC = () => {
   const { t } = useLanguage();
   const [searchTerm, setSearchTerm] = useState('');
   const [filteredRoutes, setFilteredRoutes] = useState(mockRoutes);
+  const [showAll, setShowAll] = useState(false);
+  const [displayedRoutes, setDisplayedRoutes] = useState(mockRoutes.slice(0, 3));
+
+  useEffect(() => {
+    if (showAll) {
+      setDisplayedRoutes(filteredRoutes);
+    } else {
+      setDisplayedRoutes(filteredRoutes.slice(0, 3));
+    }
+  }, [filteredRoutes, showAll]);
 
   const handleSearch = () => {
     if (!searchTerm.trim()) {
@@ -24,15 +34,21 @@ const AvailableRoutes: React.FC = () => {
     );
     
     setFilteredRoutes(filtered);
+    setShowAll(true);
   };
 
   const handleShowAll = () => {
     setSearchTerm('');
     setFilteredRoutes(mockRoutes);
+    setShowAll(true);
+  };
+
+  const handleShowLess = () => {
+    setShowAll(false);
   };
 
   return (
-    <section className="py-16 bg-slate-50 dark:bg-slate-900">
+    <section id="available-routes" className="py-16 bg-slate-50 dark:bg-slate-900">
       <div className="container mx-auto px-4">
         <div className="flex flex-col md:flex-row justify-between items-center mb-10">
           <h2 className="text-3xl font-bold mb-4 md:mb-0">
@@ -52,14 +68,20 @@ const AvailableRoutes: React.FC = () => {
             <Button onClick={handleSearch} className="bg-tunisbus hover:bg-tunisbus-dark">
               {t('common.search')}
             </Button>
-            <Button onClick={handleShowAll} variant="outline">
-              {t('routes.showAll')}
-            </Button>
+            {showAll ? (
+              <Button onClick={handleShowLess} variant="outline">
+                {t('routes.showLess')}
+              </Button>
+            ) : (
+              <Button onClick={handleShowAll} variant="outline">
+                {t('routes.showAll')}
+              </Button>
+            )}
           </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredRoutes.map((route) => (
+          {displayedRoutes.map((route) => (
             <Card key={route.id} className="overflow-hidden border shadow-sm hover:shadow-md transition-shadow">
               <CardContent className="p-0">
                 <div className="p-6">
@@ -98,7 +120,7 @@ const AvailableRoutes: React.FC = () => {
                     <div className="flex items-center space-x-2">
                       <Users className="h-4 w-4 text-muted-foreground" />
                       <span className="text-sm text-muted-foreground">
-                        {t('routes.availableSeats', { seats: route.availableSeats })}
+                        {route.availableSeats}/50
                       </span>
                     </div>
                   </div>
