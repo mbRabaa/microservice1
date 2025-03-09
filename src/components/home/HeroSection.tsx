@@ -1,7 +1,5 @@
-
 import React, { useState } from 'react';
 import { useLanguage } from '@/context/LanguageContext';
-import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Search, MapPin, Calendar } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -138,14 +136,9 @@ const HeroSection: React.FC<HeroSectionProps> = ({ loaded }) => {
           </Button>
         </div>
           
-        <div className="flex flex-col sm:flex-row gap-4 pt-4 justify-center">
+        <div className="flex justify-center pt-4">
           <Button size="lg" className="bg-tunisbus hover:bg-tunisbus-dark text-white hover-scale">
             {t('home.hero.cta')}
-          </Button>
-          <Button variant="outline" size="lg" asChild className="hover-scale">
-            <Link to="#features">
-              {t('navigation.about')}
-            </Link>
           </Button>
         </div>
       </div>
