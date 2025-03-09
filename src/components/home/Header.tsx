@@ -5,15 +5,16 @@ import { Button } from '@/components/ui/button';
 import { Bus } from 'lucide-react';
 import LanguageSelector from '@/components/LanguageSelector';
 import Sidebar from '@/components/Sidebar';
+import { useNavigate } from 'react-router-dom';
 
 interface HeaderProps {
   onOpenLoginModal: () => void;
   onAboutClick: () => void;
-  onRoutesClick: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ onOpenLoginModal, onAboutClick }) => {
+const Header: React.FC<HeaderProps> = ({ onOpenLoginModal }) => {
   const { t } = useLanguage();
+  const navigate = useNavigate();
 
   return (
     <>
@@ -28,13 +29,6 @@ const Header: React.FC<HeaderProps> = ({ onOpenLoginModal, onAboutClick }) => {
           </div>
           
           <div className="flex items-center gap-3">
-            <Button 
-              onClick={onAboutClick} 
-              variant="ghost" 
-              className="text-slate-700 hover:text-tunisbus hover:bg-tunisbus/10"
-            >
-              {t('navigation.about')}
-            </Button>
             <LanguageSelector />
             <Button 
               onClick={onOpenLoginModal} 

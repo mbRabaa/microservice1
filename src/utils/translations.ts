@@ -123,6 +123,10 @@ export const translations: Translations = {
       showLess: 'Afficher moins',
       book: 'Réserver',
       availableSeats: '{seats}/50 places',
+      allRoutes: 'Tous les trajets',
+      noRoutesFound: 'Aucun trajet trouvé',
+      from: 'De',
+      to: 'À',
     },
   },
   en: {
@@ -237,6 +241,10 @@ export const translations: Translations = {
       showLess: 'Show less',
       book: 'Book',
       availableSeats: '{seats}/50 seats',
+      allRoutes: 'All routes',
+      noRoutesFound: 'No routes found',
+      from: 'From',
+      to: 'To',
     },
   },
   ar: {
@@ -351,6 +359,10 @@ export const translations: Translations = {
       showLess: 'عرض أقل',
       book: 'حجز',
       availableSeats: '{seats}/50 مقعد',
+      allRoutes: 'جميع المسارات',
+      noRoutesFound: 'لا توجد مسارات',
+      from: 'من',
+      to: 'إلى',
     },
   },
 };

@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Search, ArrowRight, Calendar, Users } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
+import { useNavigate } from 'react-router-dom';
 
 const AvailableRoutes: React.FC = () => {
   const { t } = useLanguage();
@@ -13,6 +14,7 @@ const AvailableRoutes: React.FC = () => {
   const [filteredRoutes, setFilteredRoutes] = useState(getRoutes());
   const [showAll, setShowAll] = useState(false);
   const [displayedRoutes, setDisplayedRoutes] = useState(getRoutes().slice(0, 3));
+  const navigate = useNavigate();
 
   useEffect(() => {
     // Update routes when the component mounts or when showAll changes
@@ -45,9 +47,8 @@ const AvailableRoutes: React.FC = () => {
   };
 
   const handleShowAll = () => {
-    setSearchTerm('');
-    setFilteredRoutes(getRoutes());
-    setShowAll(true);
+    // Navigate to routes page instead of showing all routes
+    navigate('/routes');
   };
 
   const handleShowLess = () => {
@@ -75,15 +76,9 @@ const AvailableRoutes: React.FC = () => {
             <Button onClick={handleSearch} className="bg-tunisbus hover:bg-tunisbus-dark">
               {t('common.search')}
             </Button>
-            {showAll ? (
-              <Button onClick={handleShowLess} variant="outline">
-                {t('routes.showLess')}
-              </Button>
-            ) : (
-              <Button onClick={handleShowAll} variant="outline">
-                {t('routes.showAll')}
-              </Button>
-            )}
+            <Button onClick={handleShowAll} variant="outline">
+              {t('routes.showAll')}
+            </Button>
           </div>
         </div>
 
