@@ -33,6 +33,10 @@ const Index: React.FC = () => {
   const scrollToRoutes = () => {
     availableRoutesRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
+  
+  const navigateToRoutes = () => {
+    navigate('/routes');
+  };
 
   const handleLoginSuccess = () => {
     navigate('/admin');
@@ -44,7 +48,7 @@ const Index: React.FC = () => {
       <Header 
         onOpenLoginModal={handleOpenLoginModal} 
         onAboutClick={scrollToFeatures}
-        onRoutesClick={scrollToRoutes}
+        onRoutesClick={navigateToRoutes}
       />
 
       {/* Main content with sidebar space */}

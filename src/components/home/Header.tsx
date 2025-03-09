@@ -10,9 +10,10 @@ import { useNavigate } from 'react-router-dom';
 interface HeaderProps {
   onOpenLoginModal: () => void;
   onAboutClick: () => void;
+  onRoutesClick: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ onOpenLoginModal }) => {
+const Header: React.FC<HeaderProps> = ({ onOpenLoginModal, onAboutClick, onRoutesClick }) => {
   const { t } = useLanguage();
   const navigate = useNavigate();
 
