@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useLanguage } from '@/context/LanguageContext';
-import { mockRoutes } from '@/utils/data';
+import { getRoutes } from '@/utils/data';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Search, ArrowRight, Calendar, Users } from 'lucide-react';
@@ -10,9 +10,16 @@ import { Card, CardContent } from '@/components/ui/card';
 const AvailableRoutes: React.FC = () => {
   const { t } = useLanguage();
   const [searchTerm, setSearchTerm] = useState('');
-  const [filteredRoutes, setFilteredRoutes] = useState(mockRoutes);
+  const [filteredRoutes, setFilteredRoutes] = useState(getRoutes());
   const [showAll, setShowAll] = useState(false);
-  const [displayedRoutes, setDisplayedRoutes] = useState(mockRoutes.slice(0, 3));
+  const [displayedRoutes, setDisplayedRoutes] = useState(getRoutes().slice(0, 3));
+
+  useEffect(() => {
+    // Update routes when the component mounts or when showAll changes
+    const allRoutes = getRoutes();
+    setFilteredRoutes(allRoutes);
+    setDisplayedRoutes(showAll ? allRoutes : allRoutes.slice(0, 3));
+  }, [showAll]);
 
   useEffect(() => {
     if (showAll) {
@@ -24,11 +31,11 @@ const AvailableRoutes: React.FC = () => {
 
   const handleSearch = () => {
     if (!searchTerm.trim()) {
-      setFilteredRoutes(mockRoutes);
+      setFilteredRoutes(getRoutes());
       return;
     }
     
-    const filtered = mockRoutes.filter(route => 
+    const filtered = getRoutes().filter(route => 
       route.departure.toLowerCase().includes(searchTerm.toLowerCase()) ||
       route.destination.toLowerCase().includes(searchTerm.toLowerCase())
     );
@@ -39,7 +46,7 @@ const AvailableRoutes: React.FC = () => {
 
   const handleShowAll = () => {
     setSearchTerm('');
-    setFilteredRoutes(mockRoutes);
+    setFilteredRoutes(getRoutes());
     setShowAll(true);
   };
 

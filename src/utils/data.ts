@@ -1,4 +1,3 @@
-
 export interface Province {
   id: number;
   name: string;
@@ -43,7 +42,7 @@ export const tunisianProvinces: Province[] = [
   { id: 24, name: 'Kebili', nameAr: 'قبلي' },
 ];
 
-export const mockRoutes: BusRoute[] = [
+let mockRoutes: BusRoute[] = [
   {
     id: '1',
     departure: 'Tunis',
@@ -95,3 +94,26 @@ export const mockRoutes: BusRoute[] = [
     availableSeats: 42,
   },
 ];
+
+export { mockRoutes };
+
+export const addRoute = (route: Omit<BusRoute, 'id'>): string => {
+  const id = Date.now().toString();
+  const newRoute = { id, ...route };
+  mockRoutes = [...mockRoutes, newRoute];
+  return id;
+};
+
+export const updateRoute = (id: string, routeData: Omit<BusRoute, 'id'>) => {
+  mockRoutes = mockRoutes.map(route => 
+    route.id === id ? { ...route, ...routeData } : route
+  );
+};
+
+export const deleteRoute = (id: string) => {
+  mockRoutes = mockRoutes.filter(route => route.id !== id);
+};
+
+export const getRoutes = (): BusRoute[] => {
+  return [...mockRoutes];
+};

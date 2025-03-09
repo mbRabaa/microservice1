@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { useLanguage } from '@/context/LanguageContext';
 import Layout from '@/components/Layout';
-import { BusRoute, mockRoutes } from '@/utils/data';
+import { BusRoute, getRoutes, addRoute, updateRoute, deleteRoute } from '@/utils/data';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 
@@ -17,15 +17,18 @@ import DeleteRouteDialog from '@/components/dashboard/DeleteRouteDialog';
 const AdminDashboard: React.FC = () => {
   const { t } = useLanguage();
   const navigate = useNavigate();
-  const [routes, setRoutes] = useState<BusRoute[]>(mockRoutes);
-  const [filteredRoutes, setFilteredRoutes] = useState<BusRoute[]>(mockRoutes);
+  const [routes, setRoutes] = useState<BusRoute[]>([]);
+  const [filteredRoutes, setFilteredRoutes] = useState<BusRoute[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingRouteId, setEditingRouteId] = useState<string | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deletingRouteId, setDeletingRouteId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
 
-  const currentlyEditingRoute = routes.find(route => route.id === editingRouteId);
+  useEffect(() => {
+    // Load routes from the data utility
+    setRoutes(getRoutes());
+  }, []);
 
   useEffect(() => {
     handleSearch();
@@ -71,7 +74,11 @@ const AdminDashboard: React.FC = () => {
 
   const handleDeleteConfirm = () => {
     if (deletingRouteId) {
-      setRoutes(routes.filter(route => route.id !== deletingRouteId));
+      // Delete from global state
+      deleteRoute(deletingRouteId);
+      // Update local state
+      setRoutes(getRoutes());
+      
       toast.success(t('admin.notifications.routeDeleted'));
       setDeleteDialogOpen(false);
       setDeletingRouteId(null);
@@ -81,18 +88,14 @@ const AdminDashboard: React.FC = () => {
   const handleSubmitRoute = (routeData: Omit<BusRoute, 'id'>) => {
     if (editingRouteId) {
       // Edit existing route
-      setRoutes(
-        routes.map(route =>
-          route.id === editingRouteId ? { ...route, ...routeData } : route
-        )
-      );
+      updateRoute(editingRouteId, routeData);
+      setRoutes(getRoutes());
+      toast.success(t('admin.notifications.routeUpdated'));
     } else {
       // Add new route
-      const newRoute: BusRoute = {
-        id: Date.now().toString(),
-        ...routeData,
-      };
-      setRoutes([...routes, newRoute]);
+      const newId = addRoute(routeData);
+      setRoutes(getRoutes());
+      toast.success(t('admin.notifications.routeAdded'));
     }
     setShowForm(false);
     setEditingRouteId(null);
@@ -116,7 +119,7 @@ const AdminDashboard: React.FC = () => {
             editingRouteId={editingRouteId}
             onCancel={handleCancelForm}
             onSubmit={handleSubmitRoute}
-            currentlyEditingRoute={currentlyEditingRoute}
+            currentlyEditingRoute={routes.find(route => route.id === editingRouteId)}
           />
         )}
 

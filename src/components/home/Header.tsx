@@ -12,7 +12,7 @@ interface HeaderProps {
   onRoutesClick: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ onOpenLoginModal, onRoutesClick }) => {
+const Header: React.FC<HeaderProps> = ({ onOpenLoginModal, onAboutClick }) => {
   const { t } = useLanguage();
 
   return (
@@ -29,11 +29,11 @@ const Header: React.FC<HeaderProps> = ({ onOpenLoginModal, onRoutesClick }) => {
           
           <div className="flex items-center gap-3">
             <Button 
-              onClick={onRoutesClick} 
+              onClick={onAboutClick} 
               variant="ghost" 
               className="text-slate-700 hover:text-tunisbus hover:bg-tunisbus/10"
             >
-              {t('navigation.routes')}
+              {t('navigation.about')}
             </Button>
             <LanguageSelector />
             <Button 

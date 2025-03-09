@@ -58,7 +58,8 @@ export const translations: Translations = {
         searchPlaceholder: 'Trouvez votre trajet',
       },
       features: {
-        title: 'Pourquoi choisir TunisBus?',
+        title: 'Nos Services',
+        subtitle: 'Découvrez ce que TunisBus peut vous offrir',
         onlineBooking: {
           title: 'Réservation en ligne',
           description: 'Réservez facilement vos billets de bus depuis votre téléphone ou ordinateur.',
@@ -171,7 +172,8 @@ export const translations: Translations = {
         searchPlaceholder: 'Find your route',
       },
       features: {
-        title: 'Why Choose TunisBus?',
+        title: 'Our Services',
+        subtitle: 'Discover what TunisBus can offer you',
         onlineBooking: {
           title: 'Online Booking',
           description: 'Easily book your bus tickets from your phone or computer.',
@@ -284,7 +286,8 @@ export const translations: Translations = {
         searchPlaceholder: 'ابحث عن مسارك',
       },
       features: {
-        title: 'لماذا تختار تونس باص؟',
+        title: 'خدماتنا',
+        subtitle: 'اكتشف ما يمكن أن تقدمه لك تونس باص',
         onlineBooking: {
           title: 'الحجز عبر الإنترنت',
           description: 'احجز تذاكر الحافلة بسهولة من هاتفك أو جهاز الكمبيوتر الخاص بك.',
