@@ -37,13 +37,6 @@ const Header: React.FC<HeaderProps> = ({ onOpenLoginModal, onAboutClick, onRoute
             >
               {t('navigation.about')}
             </Button>
-            <Button 
-              variant="ghost"
-              onClick={onRoutesClick}
-              className="hover:bg-tunisbus/10 hover:text-tunisbus"
-            >
-              {t('navigation.routes')}
-            </Button>
             <LanguageSelector />
             <Button 
               onClick={onOpenLoginModal} 

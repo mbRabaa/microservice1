@@ -40,12 +40,6 @@ const Sidebar: React.FC<SidebarProps> = ({ className }) => {
 
   const navItems = [
     { path: '/', icon: Home, label: t('navigation.home') },
-    { 
-      path: '/admin', 
-      icon: Gauge, 
-      label: t('navigation.dashboard'),
-      onClick: handleDashboardClick 
-    },
     { path: '/routes', icon: MapPin, label: t('navigation.routes') },
     { path: '/reservations', icon: CalendarCheck, label: t('navigation.reservations') },
     { path: '/payments', icon: CreditCard, label: t('navigation.payments') },
@@ -54,6 +48,12 @@ const Sidebar: React.FC<SidebarProps> = ({ className }) => {
 
   const bottomNavItems = [
     { path: '/settings', icon: Settings, label: t('navigation.settings') },
+    { 
+      path: '/admin', 
+      icon: Gauge, 
+      label: t('navigation.dashboard'),
+      onClick: handleDashboardClick 
+    },
   ];
 
   const handleLogout = () => {
@@ -116,47 +116,48 @@ const Sidebar: React.FC<SidebarProps> = ({ className }) => {
           </ul>
         </nav>
 
-        {isAdminPage && (
-          <div className="p-4 border-t border-slate-200 dark:border-slate-800">
-            <ul className="space-y-1 px-1 mb-4">
-              {bottomNavItems.map((item) => (
-                <li key={item.path}>
-                  <NavLink
-                    to={item.path}
-                    className={({ isActive }) => cn(
-                      'flex items-center py-2 px-3 rounded-md transition-all hover:bg-slate-100 dark:hover:bg-slate-800',
-                      isActive 
-                        ? 'bg-tunisbus-light text-tunisbus dark:bg-tunisbus-dark dark:text-white font-medium' 
-                        : 'text-slate-600 dark:text-slate-300',
-                      collapsed ? 'justify-center' : 'gap-3'
-                    )}
-                  >
-                    <item.icon className={cn('flex-shrink-0', collapsed ? 'h-6 w-6' : 'h-5 w-5')} />
-                    {!collapsed && <span>{item.label}</span>}
-                  </NavLink>
-                </li>
-              ))}
-            </ul>
+        <div className="p-4 border-t border-slate-200 dark:border-slate-800">
+          <ul className="space-y-1 px-1 mb-4">
+            {bottomNavItems.map((item) => (
+              <li key={item.path}>
+                <NavLink
+                  to={item.path}
+                  className={({ isActive }) => cn(
+                    'flex items-center py-2 px-3 rounded-md transition-all hover:bg-slate-100 dark:hover:bg-slate-800',
+                    isActive 
+                      ? 'bg-tunisbus-light text-tunisbus dark:bg-tunisbus-dark dark:text-white font-medium' 
+                      : 'text-slate-600 dark:text-slate-300',
+                    collapsed ? 'justify-center' : 'gap-3'
+                  )}
+                  onClick={item.onClick}
+                >
+                  <item.icon className={cn('flex-shrink-0', collapsed ? 'h-6 w-6' : 'h-5 w-5')} />
+                  {!collapsed && <span>{item.label}</span>}
+                </NavLink>
+              </li>
+            ))}
             
-            <div className={cn(
-              'flex items-center',
-              collapsed ? 'justify-center' : 'justify-end'
-            )}>
-              <Button
-                variant="ghost"
-                size={collapsed ? 'icon' : 'sm'}
-                className={cn(
-                  'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800',
-                  collapsed ? 'h-10 w-10' : 'gap-2'
-                )}
-                onClick={handleLogout}
-              >
-                <LogOut className="h-4 w-4" />
-                {!collapsed && <span>{t('common.logout')}</span>}
-              </Button>
-            </div>
-          </div>
-        )}
+            {isAdminPage && (
+              <div className={cn(
+                'flex items-center mt-2',
+                collapsed ? 'justify-center' : 'justify-end'
+              )}>
+                <Button
+                  variant="ghost"
+                  size={collapsed ? 'icon' : 'sm'}
+                  className={cn(
+                    'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800',
+                    collapsed ? 'h-10 w-10' : 'gap-2'
+                  )}
+                  onClick={handleLogout}
+                >
+                  <LogOut className="h-4 w-4" />
+                  {!collapsed && <span>{t('common.logout')}</span>}
+                </Button>
+              </div>
+            )}
+          </ul>
+        </div>
       </div>
     </aside>
   );

@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { useLanguage } from '@/context/LanguageContext';
 import { getRoutes, BusRoute } from '@/utils/data';
@@ -13,9 +12,12 @@ const Routes: React.FC = () => {
   const [routes, setRoutes] = useState<BusRoute[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [filteredRoutes, setFilteredRoutes] = useState<BusRoute[]>([]);
+  const [isFetchingRoutes, setIsFetchingRoutes] = useState(false);
 
   useEffect(() => {
+    setIsFetchingRoutes(true);
     setRoutes(getRoutes());
+    setIsFetchingRoutes(false);
   }, []);
 
   useEffect(() => {
@@ -38,27 +40,26 @@ const Routes: React.FC = () => {
     setFilteredRoutes(filtered);
   };
 
-  // Calculate arrival time based on departure time and duration
   const calculateArrivalTime = (departureTime: string, duration: string) => {
-    // Extract hours and minutes from duration (e.g., "2h 30min")
     const durationMatch = duration.match(/(\d+)h\s+(\d+)min/);
     if (!durationMatch) return "";
     
     const durationHours = parseInt(durationMatch[1], 10);
     const durationMinutes = parseInt(durationMatch[2], 10);
     
-    // Extract hours and minutes from departure time (e.g., "08:00")
     const [depHours, depMinutes] = departureTime.split(':').map(num => parseInt(num, 10));
     
-    // Calculate total minutes
     let totalMinutes = depMinutes + durationMinutes;
     let totalHours = depHours + durationHours + Math.floor(totalMinutes / 60);
     totalMinutes %= 60;
     totalHours %= 24;
     
-    // Format the result
     return `${totalHours.toString().padStart(2, '0')}:${totalMinutes.toString().padStart(2, '0')}`;
   };
+
+  const noResultsText = isFetchingRoutes 
+    ? t('routes.loading') 
+    : t('routes.noResults');
 
   return (
     <Layout>
@@ -87,7 +88,7 @@ const Routes: React.FC = () => {
         <div className="space-y-4">
           {filteredRoutes.length === 0 ? (
             <div className="text-center py-8 text-slate-500">
-              {t('routes.noRoutesFound')}
+              {noResultsText}
             </div>
           ) : (
             filteredRoutes.map((route) => (
