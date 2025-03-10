@@ -15,6 +15,13 @@ type SidebarProps = {
   className?: string;
 };
 
+interface NavItem {
+  path: string;
+  icon: React.FC<{ className?: string }>;
+  label: string;
+  onClick?: (e: React.MouseEvent<HTMLAnchorElement>) => void;
+}
+
 const Sidebar: React.FC<SidebarProps> = ({ className }) => {
   const { t } = useLanguage();
   const [collapsed, setCollapsed] = useState(false);
@@ -38,7 +45,7 @@ const Sidebar: React.FC<SidebarProps> = ({ className }) => {
     }
   };
 
-  const navItems = [
+  const navItems: NavItem[] = [
     { path: '/', icon: Home, label: t('navigation.home') },
     { path: '/routes', icon: MapPin, label: t('navigation.routes') },
     { path: '/reservations', icon: CalendarCheck, label: t('navigation.reservations') },
@@ -46,7 +53,7 @@ const Sidebar: React.FC<SidebarProps> = ({ className }) => {
     { path: '/notifications', icon: Bell, label: t('navigation.notifications') },
   ];
 
-  const bottomNavItems = [
+  const bottomNavItems: NavItem[] = [
     { path: '/settings', icon: Settings, label: t('navigation.settings') },
     { 
       path: '/admin', 
