@@ -1,0 +1,31 @@
+
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "8080:8080"  # Frontend
+      - "5000:5000"  # Backend API
+    depends_on:
+      - db
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgres://tunisbus:tunisbus@db:5432/tunisbusdb
+    restart: always
+
+  db:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=tunisbus
+      - POSTGRES_PASSWORD=tunisbus
+      - POSTGRES_DB=tunisbusdb
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./src/database/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    restart: always
+
+volumes:
+  postgres_data:

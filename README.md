@@ -1,69 +1,75 @@
-# Welcome to your Lovable project
 
-## Project info
+# TunisBus Harmony Scheduler
 
-**URL**: https://lovable.dev/projects/1790f2bc-cf34-41f0-b11a-321c183379dc
+## Project Structure
 
-## How can I edit this code?
+The application is organized into three main directories:
 
-There are several ways of editing your application.
+- **frontend**: Contains the React application with UI components and pages
+- **backend**: Contains the Express.js server and API endpoints
+- **database**: Contains database schema and migrations
 
-**Use Lovable**
+## Development Setup
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/1790f2bc-cf34-41f0-b11a-321c183379dc) and start prompting.
+### Prerequisites
 
-Changes made via Lovable will be committed automatically to this repo.
+- Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+- PostgreSQL database (local or Docker)
 
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
+### Local Development
 
 ```sh
-# Step 1: Clone the repository using the project's Git URL.
+# Clone the repository
 git clone <YOUR_GIT_URL>
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+# Navigate to the project directory
+cd tunisbus-harmony-scheduler
 
-# Step 3: Install the necessary dependencies.
-npm i
+# Install dependencies
+npm install
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
+# Create a .env file from the example
+cp .env.example .env
+
+# Start the development server
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+## Docker Deployment
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+### Build and run with Docker Compose
 
-**Use GitHub Codespaces**
+```sh
+# Build and start all containers
+docker-compose up -d
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+# View logs
+docker-compose logs -f
 
-## What technologies are used for this project?
+# Stop all containers
+docker-compose down
+```
 
-This project is built with .
+### Build Docker image manually
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+```sh
+# Build the Docker image
+docker build -t tunisbus-harmony-scheduler .
 
-## How can I deploy this project?
+# Run the container
+docker run -p 8080:8080 -p 5000:5000 --env-file .env tunisbus-harmony-scheduler
+```
 
-Simply open [Lovable](https://lovable.dev/projects/1790f2bc-cf34-41f0-b11a-321c183379dc) and click on Share -> Publish.
+## Features
 
-## I want to use a custom domain - is that possible?
+- Bus route scheduling and management
+- Responsive design for all devices
+- Multi-language support (French, English, Arabic)
+- Admin dashboard for route management
+- User-friendly search interface
 
-We don't support custom domains (yet). If you want to deploy your project under your own domain then we recommend using Netlify. Visit our docs for more details: [Custom domains](https://docs.lovable.dev/tips-tricks/custom-domain/)
+## Tech Stack
+
+- Frontend: Vite, TypeScript, React, shadcn-ui, Tailwind CSS
+- Backend: Node.js, Express.js, PostgreSQL
+- Infrastructure: Docker, Docker Compose
