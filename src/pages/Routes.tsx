@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { useLanguage } from '@/context/LanguageContext';
 import { getRoutes, BusRoute } from '@/utils/data';
@@ -63,7 +64,7 @@ const Routes: React.FC = () => {
 
   return (
     <Layout>
-      <div className="container mx-auto px-4 py-8 ml-20 lg:ml-64">
+      <div className="container mx-auto px-4 py-8 w-full">
         <div className="flex items-center mb-6">
           <Link to="/" className="mr-4">
             <Button variant="ghost" size="icon">

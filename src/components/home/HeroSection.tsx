@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { useLanguage } from '@/context/LanguageContext';
 import { Button } from '@/components/ui/button';
-import { Search, MapPin, Calendar } from 'lucide-react';
+import { Search, MapPin, Calendar, ArrowRight, Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { tunisianProvinces, getRoutes, BusRoute } from '@/utils/data';
 import { 

@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useLanguage } from '@/context/LanguageContext';
 import { cn } from '@/lib/utils';
 import { 
@@ -44,6 +44,14 @@ const Sidebar: React.FC<SidebarProps> = ({ className }) => {
       }, 100);
     }
   };
+
+  // Emit a custom event when the sidebar is toggled
+  useEffect(() => {
+    const customEvent = new CustomEvent('sidebarToggle', {
+      detail: { collapsed }
+    });
+    window.dispatchEvent(customEvent);
+  }, [collapsed]);
 
   const navItems: NavItem[] = [
     { path: '/', icon: Home, label: t('navigation.home') },
