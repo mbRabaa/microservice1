@@ -4,89 +4,17 @@ import { useLanguage } from '@/context/LanguageContext';
 import { getRoutes, BusRoute } from '@/utils/data';
 import Layout from '@/frontend/components/Layout';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Calendar, Clock, Bus, MapPin, CreditCard, ArrowRight, ChevronLeft } from 'lucide-react';
+import { Card, CardContent } from '@/components/ui/card';
+import { Calendar, Clock, Bus, MapPin, CreditCard, ArrowRight, ChevronLeft, Search } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { format } from 'date-fns';
-
-// Filter component for routes page
-const RouteFilter: React.FC<{
-  onFilterChange: (filter: { departure: string; destination: string; date: string }) => void;
-}> = ({ onFilterChange }) => {
-  const { t } = useLanguage();
-  const [filter, setFilter] = useState({
-    departure: '',
-    destination: '',
-    date: '',
-  });
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    const { name, value } = e.target;
-    setFilter((prev) => {
-      const updated = { ...prev, [name]: value };
-      onFilterChange(updated);
-      return updated;
-    });
-  };
-
-  return (
-    <Card className="mb-6 shadow-sm border-slate-200 dark:border-slate-800">
-      <CardHeader className="pb-3">
-        <CardTitle>{t('routes.filterTitle')}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="space-y-2">
-            <label htmlFor="departure" className="text-sm font-medium">
-              {t('routes.departure')}
-            </label>
-            <input
-              id="departure"
-              name="departure"
-              type="text"
-              value={filter.departure}
-              onChange={handleChange}
-              className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
-              placeholder={t('routes.enterDeparture')}
-            />
-          </div>
-          <div className="space-y-2">
-            <label htmlFor="destination" className="text-sm font-medium">
-              {t('routes.destination')}
-            </label>
-            <input
-              id="destination"
-              name="destination"
-              type="text"
-              value={filter.destination}
-              onChange={handleChange}
-              className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
-              placeholder={t('routes.enterDestination')}
-            />
-          </div>
-          <div className="space-y-2">
-            <label htmlFor="date" className="text-sm font-medium">
-              {t('routes.date')}
-            </label>
-            <input
-              id="date"
-              name="date"
-              type="date"
-              value={filter.date}
-              onChange={handleChange}
-              className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
-            />
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-};
+import { Input } from '@/components/ui/input';
 
 const Routes: React.FC = () => {
   const { t } = useLanguage();
   const [routes, setRoutes] = useState<BusRoute[]>([]);
   const [filteredRoutes, setFilteredRoutes] = useState<BusRoute[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
     const fetchedRoutes = getRoutes();
@@ -94,26 +22,29 @@ const Routes: React.FC = () => {
     setFilteredRoutes(fetchedRoutes);
   }, []);
 
-  const handleFilterChange = (filter: { departure: string; destination: string; date: string }) => {
-    let filtered = [...routes];
-
-    if (filter.departure) {
-      filtered = filtered.filter((route) =>
-        route.departure.toLowerCase().includes(filter.departure.toLowerCase())
-      );
+  const handleSearch = () => {
+    if (!searchTerm.trim()) {
+      setFilteredRoutes(routes);
+      return;
     }
-
-    if (filter.destination) {
-      filtered = filtered.filter((route) =>
-        route.destination.toLowerCase().includes(filter.destination.toLowerCase())
-      );
-    }
-
-    if (filter.date) {
-      filtered = filtered.filter((route) => route.date === filter.date);
-    }
-
+    
+    const filtered = routes.filter((route) =>
+      route.departure.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      route.destination.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      route.date.includes(searchTerm)
+    );
+    
     setFilteredRoutes(filtered);
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSearchTerm(e.target.value);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleSearch();
+    }
   };
 
   return (
@@ -128,7 +59,23 @@ const Routes: React.FC = () => {
           <h1 className="text-2xl font-bold">{t('routes.availableRoutes')}</h1>
         </div>
 
-        <RouteFilter onFilterChange={handleFilterChange} />
+        <div className="mb-6">
+          <div className="flex items-center gap-2 max-w-md mx-auto">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
+              <Input
+                value={searchTerm}
+                onChange={handleInputChange}
+                onKeyDown={handleKeyDown}
+                placeholder={t('common.searchPlaceholder')}
+                className="pl-10"
+              />
+            </div>
+            <Button onClick={handleSearch} className="bg-tunisbus hover:bg-tunisbus-dark">
+              {t('common.search')}
+            </Button>
+          </div>
+        </div>
 
         <div className="grid grid-cols-1 gap-4">
           {filteredRoutes.map((route) => (
@@ -168,7 +115,7 @@ const Routes: React.FC = () => {
                       <span className="font-semibold">{route.price} DT</span>
                     </div>
                     <Button className="bg-tunisbus hover:bg-tunisbus-dark">
-                      {t('routes.bookNow')}
+                      {t('routes.book')}
                     </Button>
                   </div>
                 </div>

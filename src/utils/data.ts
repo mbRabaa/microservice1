@@ -1,3 +1,4 @@
+
 export interface Province {
   id: number;
   name: string;
@@ -42,7 +43,8 @@ export const tunisianProvinces: Province[] = [
   { id: 24, name: 'Kebili', nameAr: 'قبلي' },
 ];
 
-let mockRoutes: BusRoute[] = [
+// Default routes data
+const defaultRoutes: BusRoute[] = [
   {
     id: '1',
     departure: 'Tunis',
@@ -95,12 +97,35 @@ let mockRoutes: BusRoute[] = [
   },
 ];
 
+// Load routes from localStorage or use default ones
+const loadRoutes = (): BusRoute[] => {
+  const savedRoutes = localStorage.getItem('tunisbus_routes');
+  if (savedRoutes) {
+    try {
+      return JSON.parse(savedRoutes);
+    } catch (error) {
+      console.error('Error parsing saved routes:', error);
+      return [...defaultRoutes];
+    }
+  }
+  return [...defaultRoutes];
+};
+
+// Initialize mockRoutes with loaded routes
+let mockRoutes: BusRoute[] = loadRoutes();
+
+// Save routes to localStorage
+const saveRoutes = () => {
+  localStorage.setItem('tunisbus_routes', JSON.stringify(mockRoutes));
+};
+
 export { mockRoutes };
 
 export const addRoute = (route: Omit<BusRoute, 'id'>): string => {
   const id = Date.now().toString();
   const newRoute = { id, ...route };
   mockRoutes = [...mockRoutes, newRoute];
+  saveRoutes();
   return id;
 };
 
@@ -108,12 +133,16 @@ export const updateRoute = (id: string, routeData: Omit<BusRoute, 'id'>) => {
   mockRoutes = mockRoutes.map(route => 
     route.id === id ? { ...route, ...routeData } : route
   );
+  saveRoutes();
 };
 
 export const deleteRoute = (id: string) => {
   mockRoutes = mockRoutes.filter(route => route.id !== id);
+  saveRoutes();
 };
 
 export const getRoutes = (): BusRoute[] => {
+  // Always reload from localStorage first in case changes were made in another component
+  mockRoutes = loadRoutes();
   return [...mockRoutes];
 };

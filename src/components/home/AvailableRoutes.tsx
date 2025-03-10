@@ -51,10 +51,6 @@ const AvailableRoutes: React.FC = () => {
     navigate('/routes');
   };
 
-  const handleShowLess = () => {
-    setShowAll(false);
-  };
-
   return (
     <section id="available-routes" className="py-16 bg-slate-50 dark:bg-slate-900">
       <div className="container mx-auto px-4">
