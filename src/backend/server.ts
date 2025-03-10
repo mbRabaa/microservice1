@@ -1,13 +1,11 @@
 
 import express from 'express';
 import cors from 'cors';
-import { Pool } from 'pg';
 import dotenv from 'dotenv';
+import pool from '../database';
 
-// Load environment variables
 dotenv.config();
 
-// Initialize express app
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -15,61 +13,76 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-// Database connection
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+// Root route
+app.get('/', (req, res) => {
+  res.send('TunisBus API is running!');
 });
 
-// Test database connection
-pool.connect((err, client, release) => {
-  if (err) {
-    return console.error('Error acquiring client', err.stack);
-  }
-  console.log('Connected to database');
-  release();
-});
-
-// Routes
+// Get all routes
 app.get('/api/routes', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM voyages ORDER BY date, time');
     res.json(result.rows);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Internal server error' });
+  } catch (error) {
+    console.error('Error fetching routes:', error);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
-app.get('/api/routes/search', async (req, res) => {
-  const { departure, destination, date } = req.query;
-  
+// Add a new route
+app.post('/api/routes', async (req, res) => {
   try {
-    let query = 'SELECT * FROM voyages WHERE 1=1';
-    const params = [];
+    const { departure, destination, date, time, price, available_seats, duration } = req.body;
     
-    if (departure) {
-      params.push(departure);
-      query += ` AND departure = $${params.length}`;
+    const result = await pool.query(
+      'INSERT INTO voyages (departure, destination, date, time, price, available_seats, duration) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
+      [departure, destination, date, time, price, available_seats, duration]
+    );
+    
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Error adding route:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Update a route
+app.put('/api/routes/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { departure, destination, date, time, price, available_seats, duration } = req.body;
+    
+    const result = await pool.query(
+      'UPDATE voyages SET departure = $1, destination = $2, date = $3, time = $4, price = $5, available_seats = $6, duration = $7 WHERE id = $8 RETURNING *',
+      [departure, destination, date, time, price, available_seats, duration, id]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Route not found' });
     }
     
-    if (destination) {
-      params.push(destination);
-      query += ` AND destination = $${params.length}`;
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating route:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Delete a route
+app.delete('/api/routes/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const result = await pool.query('DELETE FROM voyages WHERE id = $1 RETURNING *', [id]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Route not found' });
     }
     
-    if (date) {
-      params.push(date);
-      query += ` AND date = $${params.length}`;
-    }
-    
-    query += ' ORDER BY date, time';
-    const result = await pool.query(query, params);
-    
-    res.json(result.rows);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Internal server error' });
+    res.json({ message: 'Route deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting route:', error);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 

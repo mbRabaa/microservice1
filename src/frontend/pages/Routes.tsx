@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useLanguage } from '@/context/LanguageContext';
-import { getRoutes, BusRoute } from '@/utils/data';
+import { getRoutes, BusRoute } from '@/frontend/utils/data';
 import Layout from '@/frontend/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -125,7 +125,7 @@ const Routes: React.FC = () => {
 
           {filteredRoutes.length === 0 && (
             <div className="text-center p-8">
-              <p className="text-gray-500">{t('routes.noRoutesFound')}</p>
+              <p className="text-gray-500">{t('routes.noResults')}</p>
             </div>
           )}
         </div>
