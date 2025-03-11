@@ -26,13 +26,22 @@ const AdminDashboard: React.FC = () => {
   const [deletingRouteId, setDeletingRouteId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
 
+  // Load routes on initial render
   useEffect(() => {
-    setRoutes(getRoutes());
+    loadRoutes();
   }, []);
 
+  // Filter routes when search term or routes change
   useEffect(() => {
     handleSearch();
   }, [searchTerm, routes]);
+
+  // Function to load routes from storage
+  const loadRoutes = () => {
+    const loadedRoutes = getRoutes();
+    setRoutes(loadedRoutes);
+    console.log('Routes loaded:', loadedRoutes.length);
+  };
 
   const handleSearch = () => {
     if (!searchTerm.trim()) {
@@ -75,7 +84,7 @@ const AdminDashboard: React.FC = () => {
   const handleDeleteConfirm = () => {
     if (deletingRouteId) {
       deleteRoute(deletingRouteId);
-      setRoutes(getRoutes());
+      loadRoutes(); // Reload routes after deletion
       
       toast.success(t('admin.notifications.routeDeleted'));
       setDeleteDialogOpen(false);
@@ -86,11 +95,11 @@ const AdminDashboard: React.FC = () => {
   const handleSubmitRoute = (routeData: Omit<BusRoute, 'id'>) => {
     if (editingRouteId) {
       updateRoute(editingRouteId, routeData);
-      setRoutes(getRoutes());
+      loadRoutes(); // Reload routes after update
       toast.success(t('admin.notifications.routeUpdated'));
     } else {
       const newId = addRoute(routeData);
-      setRoutes(getRoutes());
+      loadRoutes(); // Reload routes after adding
       toast.success(t('admin.notifications.routeAdded'));
     }
     setShowForm(false);

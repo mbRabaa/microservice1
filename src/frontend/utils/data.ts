@@ -111,15 +111,18 @@ const loadRoutes = (): BusRoute[] => {
   return [...defaultRoutes];
 };
 
-// Initialize mockRoutes with loaded routes
+// Global storage for routes, initialized with loaded routes
 let mockRoutes: BusRoute[] = loadRoutes();
 
-// Save routes to localStorage
+// Save routes to localStorage with proper error handling
 const saveRoutes = () => {
-  localStorage.setItem('tunisbus_routes', JSON.stringify(mockRoutes));
+  try {
+    localStorage.setItem('tunisbus_routes', JSON.stringify(mockRoutes));
+    console.log('Routes saved successfully:', mockRoutes.length, 'routes');
+  } catch (error) {
+    console.error('Error saving routes to localStorage:', error);
+  }
 };
-
-export { mockRoutes };
 
 export const addRoute = (route: Omit<BusRoute, 'id'>): string => {
   const id = Date.now().toString();
@@ -142,7 +145,7 @@ export const deleteRoute = (id: string) => {
 };
 
 export const getRoutes = (): BusRoute[] => {
-  // Always reload from localStorage first in case changes were made in another component
+  // Always reload from localStorage to ensure we have the latest data
   mockRoutes = loadRoutes();
   return [...mockRoutes];
 };

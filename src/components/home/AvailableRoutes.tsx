@@ -13,16 +13,15 @@ const AvailableRoutes: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filteredRoutes, setFilteredRoutes] = useState(getRoutes());
   const [showAll, setShowAll] = useState(false);
-  const [displayedRoutes, setDisplayedRoutes] = useState(getRoutes().slice(0, 3));
+  const [displayedRoutes, setDisplayedRoutes] = useState([]);
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Update routes when the component mounts or when showAll changes
-    const allRoutes = getRoutes();
-    setFilteredRoutes(allRoutes);
-    setDisplayedRoutes(showAll ? allRoutes : allRoutes.slice(0, 3));
-  }, [showAll]);
+    // Load routes when component mounts
+    loadRoutes();
+  }, []);
 
+  // Update displayed routes when filteredRoutes or showAll changes
   useEffect(() => {
     if (showAll) {
       setDisplayedRoutes(filteredRoutes);
@@ -31,9 +30,15 @@ const AvailableRoutes: React.FC = () => {
     }
   }, [filteredRoutes, showAll]);
 
+  const loadRoutes = () => {
+    const allRoutes = getRoutes();
+    setFilteredRoutes(allRoutes);
+    setDisplayedRoutes(showAll ? allRoutes : allRoutes.slice(0, 3));
+  };
+
   const handleSearch = () => {
     if (!searchTerm.trim()) {
-      setFilteredRoutes(getRoutes());
+      loadRoutes();
       return;
     }
     

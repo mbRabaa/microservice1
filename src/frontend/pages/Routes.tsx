@@ -17,10 +17,15 @@ const Routes: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
+    loadRoutes();
+  }, []);
+
+  const loadRoutes = () => {
     const fetchedRoutes = getRoutes();
     setRoutes(fetchedRoutes);
     setFilteredRoutes(fetchedRoutes);
-  }, []);
+    console.log('Routes page loaded:', fetchedRoutes.length);
+  };
 
   const handleSearch = () => {
     if (!searchTerm.trim()) {
