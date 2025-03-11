@@ -25,6 +25,18 @@ const RouteForm: React.FC<RouteFormProps> = ({ onSubmit, onCancel, initialData }
   const [price, setPrice] = useState(initialData?.price || '');
   const [availableSeats, setAvailableSeats] = useState(initialData?.availableSeats || 50);
 
+  const handleTimeChange = (value: string | number) => {
+    setTime(value.toString());
+  };
+
+  const handleDurationChange = (value: string | number) => {
+    setDuration(value.toString());
+  };
+
+  const handlePriceChange = (value: string | number) => {
+    setPrice(value.toString());
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -72,14 +84,14 @@ const RouteForm: React.FC<RouteFormProps> = ({ onSubmit, onCancel, initialData }
         label={t('admin.form.time')}
         type="time"
         value={time}
-        onChange={setTime}
+        onChange={handleTimeChange}
       />
       
       <FormInput
         label={t('admin.form.duration')}
         type="text"
         value={duration}
-        onChange={setDuration}
+        onChange={handleDurationChange}
         placeholder={t('admin.form.durationPlaceholder')}
       />
       
@@ -87,7 +99,7 @@ const RouteForm: React.FC<RouteFormProps> = ({ onSubmit, onCancel, initialData }
         label={t('admin.form.price')}
         type="number"
         value={price}
-        onChange={setPrice}
+        onChange={handlePriceChange}
         placeholder={t('admin.form.pricePlaceholder')}
       />
       

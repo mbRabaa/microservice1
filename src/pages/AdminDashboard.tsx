@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import DashboardHeader from '@/components/dashboard/DashboardHeader';
@@ -12,6 +13,7 @@ import { BusRoute, getRoutes, addRoute, updateRoute, deleteRoute } from '@/front
 import { Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
+import Layout from '@/components/Layout';
 
 const AdminDashboard: React.FC = () => {
   const { t } = useLanguage();

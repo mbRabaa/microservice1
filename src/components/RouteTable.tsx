@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { useLanguage } from '@/context/LanguageContext';
 import { Button } from '@/components/ui/button';
@@ -16,17 +17,12 @@ const RouteTable: React.FC<RouteTableProps> = ({ routes, onEdit, onDelete }) => 
   const [deleteRouteId, setDeleteRouteId] = React.useState<string | null>(null);
   const [openDeleteDialog, setOpenDeleteDialog] = React.useState(false);
 
-  const confirmDelete = () => {
+  const handleConfirm = () => {
     if (deleteRouteId) {
       onDelete(deleteRouteId);
       setDeleteRouteId(null);
       setOpenDeleteDialog(false);
     }
-  };
-
-  const cancelDelete = () => {
-    setDeleteRouteId(null);
-    setOpenDeleteDialog(false);
   };
 
   return (
@@ -105,8 +101,7 @@ const RouteTable: React.FC<RouteTableProps> = ({ routes, onEdit, onDelete }) => 
       <DeleteRouteDialog
         open={openDeleteDialog}
         onOpenChange={setOpenDeleteDialog}
-        confirmDelete={confirmDelete}
-        cancelDelete={cancelDelete}
+        onConfirm={handleConfirm}
       />
     </div>
   );
