@@ -1,136 +1,225 @@
-
 import React, { useState, useEffect } from 'react';
+import { ArrowRight, Calendar, Users, Search, MapPin } from 'lucide-react';
+import { toast } from 'sonner';
+import { tunisianProvinces, getRoutes, BusRoute } from '@/frontend/utils/data';
 import { useLanguage } from '@/context/LanguageContext';
-import { getRoutes, BusRoute } from '@/frontend/utils/data';
-import Layout from '@/components/Layout';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import { Calendar, Clock, Bus, MapPin, CreditCard, ArrowRight, ChevronLeft, Search } from 'lucide-react';
-import { Link } from 'react-router-dom';
-import { format } from 'date-fns';
 import { Input } from '@/components/ui/input';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Calendar as CalendarComponent } from "@/components/ui/calendar";
+import { format } from 'date-fns';
 
 const Routes: React.FC = () => {
-  const { t } = useLanguage();
+  const { t, locale } = useLanguage();
+  const [departure, setDeparture] = useState('');
+  const [destination, setDestination] = useState('');
+  const [date, setDate] = useState<Date | undefined>(undefined);
+  const [searchTerm, setSearchTerm] = useState('');
   const [routes, setRoutes] = useState<BusRoute[]>([]);
   const [filteredRoutes, setFilteredRoutes] = useState<BusRoute[]>([]);
-  const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
-    const fetchedRoutes = getRoutes();
-    setRoutes(fetchedRoutes);
-    setFilteredRoutes(fetchedRoutes);
+    const allRoutes = getRoutes();
+    setRoutes(allRoutes);
+    setFilteredRoutes(allRoutes);
   }, []);
 
   const handleSearch = () => {
-    if (!searchTerm.trim()) {
-      setFilteredRoutes(routes);
-      return;
+    let results = getRoutes();
+
+    if (departure) {
+      results = results.filter(route =>
+        route.departure.toLowerCase().includes(departure.toLowerCase())
+      );
     }
-    
-    const filtered = routes.filter((route) =>
-      route.departure.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      route.destination.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      route.date.includes(searchTerm)
-    );
-    
-    setFilteredRoutes(filtered);
+
+    if (destination) {
+      results = results.filter(route =>
+        route.destination.toLowerCase().includes(destination.toLowerCase())
+      );
+    }
+
+    if (date) {
+      results = results.filter(route =>
+        new Date(route.date).toDateString() === date.toDateString()
+      );
+    }
+
+    if (searchTerm) {
+      results = results.filter(route =>
+        route.departure.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        route.destination.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+    }
+
+    if (results.length === 0) {
+      toast.info(t('routes.noResults'));
+    }
+
+    setFilteredRoutes(results);
   };
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setSearchTerm(e.target.value);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      handleSearch();
-    }
+  const clearFilters = () => {
+    setDeparture('');
+    setDestination('');
+    setDate(undefined);
+    setSearchTerm('');
+    setFilteredRoutes(routes);
   };
 
   return (
-    <Layout>
-      <div className="container mx-auto px-4 py-8 w-full">
-        <div className="flex items-center mb-6">
-          <Link to="/" className="mr-4">
-            <Button variant="ghost" size="icon">
-              <ChevronLeft className="h-5 w-5" />
-            </Button>
-          </Link>
-          <h1 className="text-2xl font-bold">{t('routes.availableRoutes')}</h1>
-        </div>
+    <div className="container mx-auto py-16">
+      <h1 className="text-3xl font-bold text-center mb-8">{t('routes.title')}</h1>
 
-        <div className="mb-6">
-          <div className="flex items-center gap-2 max-w-md mx-auto">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
-              <Input
-                value={searchTerm}
-                onChange={handleInputChange}
-                onKeyDown={handleKeyDown}
-                placeholder={t('common.searchPlaceholder')}
-                className="pl-10"
-              />
-            </div>
-            <Button onClick={handleSearch} className="bg-tunisbus hover:bg-tunisbus-dark">
-              {t('common.search')}
-            </Button>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        {/* Departure Filter */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700">{t('admin.form.departure')}</label>
+          <div className="relative mt-1">
+            <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-slate-400" />
+            <select
+              className="pl-10 w-full h-11 rounded-md border border-slate-200 bg-white dark:bg-slate-900 dark:border-slate-700 focus:ring-2 focus:ring-tunisbus"
+              value={departure}
+              onChange={(e) => setDeparture(e.target.value)}
+            >
+              <option value="">{t('admin.form.selectDeparture')}</option>
+              {tunisianProvinces.map(province => (
+                <option key={`dep-${province.id}`} value={province.name}>
+                  {locale === 'ar' ? province.nameAr : province.name}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-4">
-          {filteredRoutes.map((route) => (
-            <Card
-              key={route.id}
-              className="hover:shadow-md transition-shadow border-slate-200 dark:border-slate-800"
+        {/* Destination Filter */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700">{t('admin.form.destination')}</label>
+          <div className="relative mt-1">
+            <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-slate-400" />
+            <select
+              className="pl-10 w-full h-11 rounded-md border border-slate-200 bg-white dark:bg-slate-900 dark:border-slate-700 focus:ring-2 focus:ring-tunisbus"
+              value={destination}
+              onChange={(e) => setDestination(e.target.value)}
             >
-              <CardContent className="p-6">
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                  <div className="flex-1">
-                    <div className="flex items-center mb-2">
-                      <MapPin className="text-tunisbus h-5 w-5 mr-2" />
-                      <div className="flex flex-col md:flex-row md:items-center">
-                        <span className="font-semibold text-lg">{route.departure}</span>
-                        <ArrowRight className="h-4 w-4 mx-2 hidden md:block" />
-                        <span className="font-semibold text-lg">{route.destination}</span>
-                      </div>
-                    </div>
-                    <div className="flex flex-col md:flex-row md:items-center text-gray-600 text-sm gap-1 md:gap-4">
-                      <div className="flex items-center">
-                        <Calendar className="h-4 w-4 mr-1" />
-                        <span>{format(new Date(route.date), 'dd/MM/yyyy')}</span>
-                      </div>
-                      <div className="flex items-center">
-                        <Clock className="h-4 w-4 mr-1" />
-                        <span>{route.time}</span>
-                      </div>
-                      <div className="flex items-center">
-                        <Bus className="h-4 w-4 mr-1" />
-                        <span>{route.duration}</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex flex-col md:flex-row items-start md:items-center gap-3">
-                    <div className="flex items-center justify-center bg-green-50 text-green-700 px-3 py-1 rounded-full">
-                      <CreditCard className="h-4 w-4 mr-1" />
-                      <span className="font-semibold">{route.price} DT</span>
-                    </div>
-                    <Button className="bg-tunisbus hover:bg-tunisbus-dark">
-                      {t('routes.book')}
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+              <option value="">{t('admin.form.selectDestination')}</option>
+              {tunisianProvinces.map(province => (
+                <option key={`dest-${province.id}`} value={province.name}>
+                  {locale === 'ar' ? province.nameAr : province.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
 
-          {filteredRoutes.length === 0 && (
-            <div className="text-center p-8">
-              <p className="text-gray-500">{t('routes.noResults')}</p>
-            </div>
-          )}
+        {/* Date Filter */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700">{t('admin.form.date')}</label>
+          <div className="relative mt-1">
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className="pl-10 w-full h-11 justify-start text-left font-normal">
+                  <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-slate-400" />
+                  {date ? format(date, 'PP') : <span>{t('admin.form.date')}</span>}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="start">
+                <CalendarComponent
+                  mode="single"
+                  selected={date}
+                  onSelect={setDate}
+                  initialFocus
+                  className="p-3 pointer-events-auto"
+                />
+              </PopoverContent>
+            </Popover>
+          </div>
         </div>
       </div>
-    </Layout>
+
+      {/* Search and Clear Buttons */}
+      <div className="flex items-center justify-between mb-8">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
+          <Input
+            className="pl-10 w-64"
+            placeholder={t('common.searchPlaceholder')}
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+        </div>
+        <div className="space-x-2">
+          <Button onClick={handleSearch} className="bg-tunisbus hover:bg-tunisbus-dark">
+            {t('common.search')}
+          </Button>
+          <Button variant="outline" onClick={clearFilters}>
+            {t('common.clear')}
+          </Button>
+        </div>
+      </div>
+
+      {/* Routes List */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {filteredRoutes.map((route) => (
+          <div key={route.id} className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden hover:shadow-md transition-shadow">
+            <div className="p-6">
+              <div className="flex justify-between items-start mb-4">
+                <div className="space-y-1">
+                  <span className="text-sm text-muted-foreground">{t('admin.form.departure')}</span>
+                  <h3 className="text-lg font-semibold">{route.departure}</h3>
+                  <p className="text-lg">{route.time}</p>
+                </div>
+
+                <div className="flex items-center flex-1 justify-center px-4">
+                  <div className="relative w-full">
+                    <div className="border-t-2 border-dashed border-purple-300 w-full"></div>
+                    <div className="absolute -right-1 top-1/2 transform -translate-y-1/2">
+                      <ArrowRight className="h-5 w-5 text-tunisbus" />
+                    </div>
+                  </div>
+                  <div className="text-sm text-tunisbus font-medium whitespace-nowrap px-2">
+                    {route.duration}
+                  </div>
+                </div>
+
+                <div className="space-y-1 text-right">
+                  <span className="text-sm text-muted-foreground">{t('admin.form.destination')}</span>
+                  <h3 className="text-lg font-semibold">{route.destination}</h3>
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center pt-3 border-t">
+                <div className="flex items-center space-x-2">
+                  <Calendar className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">
+                    {new Date(route.date).toLocaleDateString()}
+                  </span>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Users className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">
+                    {route.availableSeats}/50
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-between items-center p-4 bg-slate-50 dark:bg-slate-800">
+              <div className="text-2xl font-bold text-tunisbus">
+                {route.price} <span className="text-sm font-normal">DT</span>
+              </div>
+              <Button className="bg-tunisbus hover:bg-tunisbus-dark">
+                {t('routes.book')}
+              </Button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 };
 

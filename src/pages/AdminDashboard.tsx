@@ -1,18 +1,17 @@
-
 import React, { useState, useEffect } from 'react';
-import { useLanguage } from '@/context/LanguageContext';
-import Layout from '@/components/Layout';
-import { BusRoute, getRoutes, addRoute, updateRoute, deleteRoute } from '@/frontend/utils/data';
-import { toast } from 'sonner';
-import { useNavigate } from 'react-router-dom';
-
-// Import refactored components
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import DashboardHeader from '@/components/dashboard/DashboardHeader';
 import StatsCards from '@/components/dashboard/StatsCards';
 import WeeklyStatsCard from '@/components/dashboard/WeeklyStatsCard';
 import RouteFormCard from '@/components/dashboard/RouteFormCard';
 import RouteManagement from '@/components/dashboard/RouteManagement';
 import DeleteRouteDialog from '@/components/dashboard/DeleteRouteDialog';
+import { Button } from '@/components/ui/button';
+import { useLanguage } from '@/context/LanguageContext';
+import { BusRoute, getRoutes, addRoute, updateRoute, deleteRoute } from '@/frontend/utils/data';
+import { Plus } from 'lucide-react';
+import { toast } from 'sonner';
+import { useNavigate } from 'react-router-dom';
 
 const AdminDashboard: React.FC = () => {
   const { t } = useLanguage();
@@ -26,7 +25,6 @@ const AdminDashboard: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
-    // Load routes from the data utility
     setRoutes(getRoutes());
   }, []);
 
@@ -74,9 +72,7 @@ const AdminDashboard: React.FC = () => {
 
   const handleDeleteConfirm = () => {
     if (deletingRouteId) {
-      // Delete from global state
       deleteRoute(deletingRouteId);
-      // Update local state
       setRoutes(getRoutes());
       
       toast.success(t('admin.notifications.routeDeleted'));
@@ -87,12 +83,10 @@ const AdminDashboard: React.FC = () => {
 
   const handleSubmitRoute = (routeData: Omit<BusRoute, 'id'>) => {
     if (editingRouteId) {
-      // Edit existing route
       updateRoute(editingRouteId, routeData);
       setRoutes(getRoutes());
       toast.success(t('admin.notifications.routeUpdated'));
     } else {
-      // Add new route
       const newId = addRoute(routeData);
       setRoutes(getRoutes());
       toast.success(t('admin.notifications.routeAdded'));

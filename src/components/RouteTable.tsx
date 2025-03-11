@@ -1,82 +1,113 @@
-
 import React from 'react';
 import { useLanguage } from '@/context/LanguageContext';
-import { BusRoute } from '@/frontend/utils/data';
 import { Button } from '@/components/ui/button';
-import { Edit, Trash2 } from 'lucide-react';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { BusRoute } from '@/frontend/utils/data';
+import { Edit, Trash2, Calendar, MapPin, Clock, CreditCard } from 'lucide-react';
+import DeleteRouteDialog from './dashboard/DeleteRouteDialog';
 
-type RouteTableProps = {
+interface RouteTableProps {
   routes: BusRoute[];
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
-};
+}
 
 const RouteTable: React.FC<RouteTableProps> = ({ routes, onEdit, onDelete }) => {
   const { t } = useLanguage();
+  const [deleteRouteId, setDeleteRouteId] = React.useState<string | null>(null);
+  const [openDeleteDialog, setOpenDeleteDialog] = React.useState(false);
 
-  if (routes.length === 0) {
-    return (
-      <div className="text-center p-8">
-        <p className="text-muted-foreground">{t('admin.routesList')} {t('common.loading')}</p>
-      </div>
-    );
-  }
+  const confirmDelete = () => {
+    if (deleteRouteId) {
+      onDelete(deleteRouteId);
+      setDeleteRouteId(null);
+      setOpenDeleteDialog(false);
+    }
+  };
+
+  const cancelDelete = () => {
+    setDeleteRouteId(null);
+    setOpenDeleteDialog(false);
+  };
 
   return (
-    <div className="rounded-md border animate-fade-in">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>{t('admin.table.departure')}</TableHead>
-            <TableHead>{t('admin.table.destination')}</TableHead>
-            <TableHead>{t('admin.table.date')}</TableHead>
-            <TableHead>{t('admin.table.time')}</TableHead>
-            <TableHead>{t('admin.table.price')}</TableHead>
-            <TableHead>{t('admin.table.availableSeats')}</TableHead>
-            <TableHead className="w-24 text-right">{t('admin.table.actions')}</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
+    <div className="overflow-x-auto">
+      <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <thead className="bg-gray-50 dark:bg-gray-800">
+          <tr>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t('admin.form.departure')}</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t('admin.form.destination')}</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t('admin.form.date')}</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t('admin.form.time')}</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t('admin.form.duration')}</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t('admin.form.price')}</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t('admin.form.availableSeats')}</th>
+            <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+          </tr>
+        </thead>
+        <tbody className="bg-white divide-y divide-gray-200 dark:divide-gray-700">
           {routes.map((route) => (
-            <TableRow key={route.id} className="transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50">
-              <TableCell>{route.departure}</TableCell>
-              <TableCell>{route.destination}</TableCell>
-              <TableCell>{new Date(route.date).toLocaleDateString()}</TableCell>
-              <TableCell>{route.time}</TableCell>
-              <TableCell>{route.price.toFixed(2)} TND</TableCell>
-              <TableCell>{route.availableSeats}</TableCell>
-              <TableCell className="text-right">
-                <div className="flex justify-end gap-2">
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={() => onEdit(route.id)}
-                    className="h-8 w-8"
-                  >
-                    <Edit className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={() => onDelete(route.id)}
-                    className="h-8 w-8 text-destructive hover:text-destructive"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+            <tr key={route.id}>
+              <td className="px-6 py-4 whitespace-nowrap">
+                <div className="flex items-center">
+                  <MapPin className="h-4 w-4 mr-2 text-gray-400" />
+                  <div className="text-sm font-medium text-gray-900 dark:text-white">{route.departure}</div>
                 </div>
-              </TableCell>
-            </TableRow>
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap">
+                <div className="flex items-center">
+                  <MapPin className="h-4 w-4 mr-2 text-gray-400" />
+                  <div className="text-sm text-gray-900 dark:text-white">{route.destination}</div>
+                </div>
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap">
+                <div className="flex items-center">
+                  <Calendar className="h-4 w-4 mr-2 text-gray-400" />
+                  <div className="text-sm text-gray-900 dark:text-white">{new Date(route.date).toLocaleDateString()}</div>
+                </div>
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap">
+                <div className="flex items-center">
+                  <Clock className="h-4 w-4 mr-2 text-gray-400" />
+                  <div className="text-sm text-gray-900 dark:text-white">{route.time}</div>
+                </div>
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap">
+                <div className="flex items-center">
+                  <Clock className="h-4 w-4 mr-2 text-gray-400" />
+                  <div className="text-sm text-gray-900 dark:text-white">{route.duration}</div>
+                </div>
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap">
+                <div className="flex items-center">
+                  <CreditCard className="h-4 w-4 mr-2 text-gray-400" />
+                  <div className="text-sm text-gray-900 dark:text-white">{route.price}</div>
+                </div>
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap">
+                <div className="text-sm text-gray-900 dark:text-white">{route.availableSeats}</div>
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap text-right">
+                <Button variant="ghost" size="icon" onClick={() => onEdit(route.id)}>
+                  <Edit className="h-4 w-4" />
+                </Button>
+                <Button variant="ghost" size="icon" onClick={() => {
+                  setDeleteRouteId(route.id);
+                  setOpenDeleteDialog(true);
+                }}>
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </td>
+            </tr>
           ))}
-        </TableBody>
-      </Table>
+        </tbody>
+      </table>
+
+      <DeleteRouteDialog
+        open={openDeleteDialog}
+        onOpenChange={setOpenDeleteDialog}
+        confirmDelete={confirmDelete}
+        cancelDelete={cancelDelete}
+      />
     </div>
   );
 };
