@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { useLanguage } from '@/context/LanguageContext';
-import { BusRoute } from '@/utils/data';
+import { BusRoute } from '@/frontend/utils/data';
 import { Button } from '@/components/ui/button';
 import { Edit, Trash2 } from 'lucide-react';
 import {

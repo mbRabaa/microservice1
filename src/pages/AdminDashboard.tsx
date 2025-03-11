@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { useLanguage } from '@/context/LanguageContext';
 import Layout from '@/components/Layout';
-import { BusRoute, getRoutes, addRoute, updateRoute, deleteRoute } from '@/utils/data';
+import { BusRoute, getRoutes, addRoute, updateRoute, deleteRoute } from '@/frontend/utils/data';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 

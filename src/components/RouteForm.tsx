@@ -1,8 +1,8 @@
 
 import React, { useState } from 'react';
 import { useLanguage } from '@/context/LanguageContext';
-import { BusRoute } from '@/utils/data';
-import { tunisianProvinces } from '@/utils/data';
+import { BusRoute } from '@/frontend/utils/data';
+import { tunisianProvinces } from '@/frontend/utils/data';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';

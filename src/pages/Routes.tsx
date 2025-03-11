@@ -1,29 +1,26 @@
 
 import React, { useState, useEffect } from 'react';
 import { useLanguage } from '@/context/LanguageContext';
-import { getRoutes, BusRoute } from '@/utils/data';
-import { ArrowLeft, Search, Calendar, Users, ArrowRight, Clock } from 'lucide-react';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { Link } from 'react-router-dom';
+import { getRoutes, BusRoute } from '@/frontend/utils/data';
 import Layout from '@/components/Layout';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { Calendar, Clock, Bus, MapPin, CreditCard, ArrowRight, ChevronLeft, Search } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { format } from 'date-fns';
+import { Input } from '@/components/ui/input';
 
 const Routes: React.FC = () => {
   const { t } = useLanguage();
   const [routes, setRoutes] = useState<BusRoute[]>([]);
-  const [searchTerm, setSearchTerm] = useState('');
   const [filteredRoutes, setFilteredRoutes] = useState<BusRoute[]>([]);
-  const [isFetchingRoutes, setIsFetchingRoutes] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
-    setIsFetchingRoutes(true);
-    setRoutes(getRoutes());
-    setIsFetchingRoutes(false);
+    const fetchedRoutes = getRoutes();
+    setRoutes(fetchedRoutes);
+    setFilteredRoutes(fetchedRoutes);
   }, []);
-
-  useEffect(() => {
-    handleSearch();
-  }, [searchTerm, routes]);
 
   const handleSearch = () => {
     if (!searchTerm.trim()) {
@@ -31,36 +28,24 @@ const Routes: React.FC = () => {
       return;
     }
     
-    const filtered = routes.filter(route => 
+    const filtered = routes.filter((route) =>
       route.departure.toLowerCase().includes(searchTerm.toLowerCase()) ||
       route.destination.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      new Date(route.date).toLocaleDateString().includes(searchTerm) ||
-      route.time.includes(searchTerm)
+      route.date.includes(searchTerm)
     );
     
     setFilteredRoutes(filtered);
   };
 
-  const calculateArrivalTime = (departureTime: string, duration: string) => {
-    const durationMatch = duration.match(/(\d+)h\s+(\d+)min/);
-    if (!durationMatch) return "";
-    
-    const durationHours = parseInt(durationMatch[1], 10);
-    const durationMinutes = parseInt(durationMatch[2], 10);
-    
-    const [depHours, depMinutes] = departureTime.split(':').map(num => parseInt(num, 10));
-    
-    let totalMinutes = depMinutes + durationMinutes;
-    let totalHours = depHours + durationHours + Math.floor(totalMinutes / 60);
-    totalMinutes %= 60;
-    totalHours %= 24;
-    
-    return `${totalHours.toString().padStart(2, '0')}:${totalMinutes.toString().padStart(2, '0')}`;
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSearchTerm(e.target.value);
   };
 
-  const noResultsText = isFetchingRoutes 
-    ? t('routes.loading') 
-    : t('routes.noResults');
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleSearch();
+    }
+  };
 
   return (
     <Layout>
@@ -68,89 +53,80 @@ const Routes: React.FC = () => {
         <div className="flex items-center mb-6">
           <Link to="/" className="mr-4">
             <Button variant="ghost" size="icon">
-              <ArrowLeft className="h-5 w-5" />
+              <ChevronLeft className="h-5 w-5" />
             </Button>
           </Link>
-          <h1 className="text-3xl font-bold">{t('routes.allRoutes')}</h1>
+          <h1 className="text-2xl font-bold">{t('routes.availableRoutes')}</h1>
         </div>
-        
-        <div className="mb-8">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
-            <Input
-              className="pl-10 py-6 text-lg"
-              placeholder={t('common.searchPlaceholder')}
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
+
+        <div className="mb-6">
+          <div className="flex items-center gap-2 max-w-md mx-auto">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
+              <Input
+                value={searchTerm}
+                onChange={handleInputChange}
+                onKeyDown={handleKeyDown}
+                placeholder={t('common.searchPlaceholder')}
+                className="pl-10"
+              />
+            </div>
+            <Button onClick={handleSearch} className="bg-tunisbus hover:bg-tunisbus-dark">
+              {t('common.search')}
+            </Button>
           </div>
         </div>
-        
-        <div className="space-y-4">
-          {filteredRoutes.length === 0 ? (
-            <div className="text-center py-8 text-slate-500">
-              {noResultsText}
-            </div>
-          ) : (
-            filteredRoutes.map((route) => (
-              <div 
-                key={route.id} 
-                className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-4 hover:shadow-md transition-shadow"
-              >
-                <div className="flex flex-col md:flex-row md:items-center md:justify-between">
-                  <div className="flex flex-col md:flex-row md:items-center gap-6 w-full">
-                    <div className="flex-1">
-                      <div className="flex items-start">
-                        <div className="flex-1">
-                          <p className="text-sm text-muted-foreground">{t('routes.from')}</p>
-                          <h3 className="text-xl font-bold">{route.departure}</h3>
-                          <p className="text-lg">{route.time}</p>
-                        </div>
 
-                        <div className="flex items-center flex-1 px-4 max-w-[200px]">
-                          <div className="relative w-full">
-                            <div className="border-t-2 border-dashed border-purple-300 w-full"></div>
-                            <div className="absolute -right-1 top-1/2 transform -translate-y-1/2">
-                              <ArrowRight className="h-5 w-5 text-tunisbus" />
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="flex-1">
-                          <p className="text-sm text-muted-foreground">{t('routes.to')}</p>
-                          <h3 className="text-xl font-bold">{route.destination}</h3>
-                          <p className="text-lg">{calculateArrivalTime(route.time, route.duration)}</p>
-                        </div>
-                      </div>
-                      
-                      <div className="flex items-center gap-6 mt-4">
-                        <div className="flex items-center gap-2">
-                          <Clock className="h-4 w-4 text-tunisbus" />
-                          <span className="text-sm">{route.duration}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Calendar className="h-4 w-4 text-tunisbus" />
-                          <span className="text-sm">{new Date(route.date).toLocaleDateString()}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Users className="h-4 w-4 text-tunisbus" />
-                          <span className="text-sm">{t('routes.availableSeats', { seats: route.availableSeats })}</span>
-                        </div>
+        <div className="grid grid-cols-1 gap-4">
+          {filteredRoutes.map((route) => (
+            <Card
+              key={route.id}
+              className="hover:shadow-md transition-shadow border-slate-200 dark:border-slate-800"
+            >
+              <CardContent className="p-6">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                  <div className="flex-1">
+                    <div className="flex items-center mb-2">
+                      <MapPin className="text-tunisbus h-5 w-5 mr-2" />
+                      <div className="flex flex-col md:flex-row md:items-center">
+                        <span className="font-semibold text-lg">{route.departure}</span>
+                        <ArrowRight className="h-4 w-4 mx-2 hidden md:block" />
+                        <span className="font-semibold text-lg">{route.destination}</span>
                       </div>
                     </div>
-                    
-                    <div className="flex flex-col items-end justify-between md:min-w-36 mt-4 md:mt-0">
-                      <div className="text-2xl font-bold text-tunisbus">
-                        {route.price} <span className="text-sm font-normal">DT</span>
+                    <div className="flex flex-col md:flex-row md:items-center text-gray-600 text-sm gap-1 md:gap-4">
+                      <div className="flex items-center">
+                        <Calendar className="h-4 w-4 mr-1" />
+                        <span>{format(new Date(route.date), 'dd/MM/yyyy')}</span>
                       </div>
-                      <Button className="bg-tunisbus hover:bg-tunisbus-dark w-full md:w-auto mt-2">
-                        {t('routes.book')}
-                      </Button>
+                      <div className="flex items-center">
+                        <Clock className="h-4 w-4 mr-1" />
+                        <span>{route.time}</span>
+                      </div>
+                      <div className="flex items-center">
+                        <Bus className="h-4 w-4 mr-1" />
+                        <span>{route.duration}</span>
+                      </div>
                     </div>
                   </div>
+                  <div className="flex flex-col md:flex-row items-start md:items-center gap-3">
+                    <div className="flex items-center justify-center bg-green-50 text-green-700 px-3 py-1 rounded-full">
+                      <CreditCard className="h-4 w-4 mr-1" />
+                      <span className="font-semibold">{route.price} DT</span>
+                    </div>
+                    <Button className="bg-tunisbus hover:bg-tunisbus-dark">
+                      {t('routes.book')}
+                    </Button>
+                  </div>
                 </div>
-              </div>
-            ))
+              </CardContent>
+            </Card>
+          ))}
+
+          {filteredRoutes.length === 0 && (
+            <div className="text-center p-8">
+              <p className="text-gray-500">{t('routes.noResults')}</p>
+            </div>
           )}
         </div>
       </div>

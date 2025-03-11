@@ -1,10 +1,9 @@
-
 import React from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import RouteTable from '@/components/RouteTable';
-import { BusRoute } from '@/utils/data';
+import { BusRoute } from '@/frontend/utils/data';
 
 interface RouteManagementProps {
   filteredRoutes: BusRoute[];

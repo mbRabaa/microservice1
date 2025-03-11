@@ -1,11 +1,10 @@
-
 import React from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { X } from 'lucide-react';
 import RouteForm from '@/components/RouteForm';
 import { useLanguage } from '@/context/LanguageContext';
-import { BusRoute } from '@/utils/data';
+import { BusRoute } from '@/frontend/utils/data';
 
 interface RouteFormCardProps {
   editingRouteId: string | null;
