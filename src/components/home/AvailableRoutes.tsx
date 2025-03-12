@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/context/LanguageContext';
 import { getRoutesSync, BusRoute } from '@/frontend/utils/data';
@@ -14,33 +14,19 @@ const AvailableRoutes: React.FC = () => {
   const [routes, setRoutes] = useState<BusRoute[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [filteredRoutes, setFilteredRoutes] = useState<BusRoute[]>([]);
-  const [showAll, setShowAll] = useState(false);
-  const [displayedRoutes, setDisplayedRoutes] = useState<BusRoute[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Load routes when component mounts
     loadRoutes();
   }, []);
-
-  // Update displayed routes when filteredRoutes or showAll changes
-  useEffect(() => {
-    if (showAll) {
-      setDisplayedRoutes(filteredRoutes);
-    } else {
-      setDisplayedRoutes(filteredRoutes.slice(0, 3));
-    }
-  }, [filteredRoutes, showAll]);
 
   const loadRoutes = async () => {
     setIsLoading(true);
     try {
-      // Use the sync version for initial quick loading
       const allRoutes = getRoutesSync();
       setRoutes(allRoutes);
-      setFilteredRoutes(allRoutes);
-      setDisplayedRoutes(showAll ? allRoutes : allRoutes.slice(0, 3));
+      setFilteredRoutes(allRoutes.slice(0, 3));
     } catch (error) {
       console.error('Error loading routes:', error);
     } finally {
@@ -50,7 +36,7 @@ const AvailableRoutes: React.FC = () => {
 
   const handleSearch = () => {
     if (!searchTerm.trim()) {
-      setFilteredRoutes(routes);
+      setFilteredRoutes(routes.slice(0, 3));
       return;
     }
     
@@ -58,7 +44,7 @@ const AvailableRoutes: React.FC = () => {
       route.departure.toLowerCase().includes(searchTerm.toLowerCase()) ||
       route.destination.toLowerCase().includes(searchTerm.toLowerCase()) ||
       route.date.includes(searchTerm)
-    );
+    ).slice(0, 3);
     
     setFilteredRoutes(filtered);
   };
@@ -66,10 +52,6 @@ const AvailableRoutes: React.FC = () => {
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSearchTerm(e.target.value);
     setTimeout(handleSearch, 300);
-  };
-
-  const toggleShowAll = () => {
-    setShowAll(!showAll);
   };
 
   const navigateToRoutes = () => {
@@ -121,9 +103,9 @@ const AvailableRoutes: React.FC = () => {
               </Card>
             ))}
           </div>
-        ) : displayedRoutes.length > 0 ? (
+        ) : filteredRoutes.length > 0 ? (
           <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {displayedRoutes.map((route) => (
+            {filteredRoutes.map((route) => (
               <Card key={route.id} className="overflow-hidden">
                 <div className="h-40 bg-gradient-to-r from-blue-400 to-indigo-500 flex items-center justify-center">
                   <div className="text-white text-center">
@@ -167,16 +149,7 @@ const AvailableRoutes: React.FC = () => {
         )}
 
         <div className="text-center mt-8">
-          {filteredRoutes.length > 3 && (
-            <Button 
-              variant="outline" 
-              onClick={toggleShowAll}
-              className="mx-2"
-            >
-              {showAll ? t('home.showLess') : t('home.showMore')}
-            </Button>
-          )}
-          <Button onClick={navigateToRoutes} className="mx-2">
+          <Button onClick={navigateToRoutes} className="bg-tunisbus hover:bg-tunisbus-dark">
             {t('home.viewAllRoutes')}
           </Button>
         </div>
