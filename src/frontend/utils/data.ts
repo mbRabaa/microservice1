@@ -238,12 +238,13 @@ export const deleteRoute = async (id: string) => {
   }
 };
 
-// Get all routes
+// Get all routes ASYNC version
 export const getRoutes = async (): Promise<BusRoute[]> => {
   try {
     // Try to get the latest routes from the database
     mockRoutes = await fetchRoutesFromAPI();
     saveRoutesToLocalStorage();
+    return [...mockRoutes];
   } catch (error) {
     console.error('Error getting routes from database:', error);
     
@@ -251,9 +252,8 @@ export const getRoutes = async (): Promise<BusRoute[]> => {
     if (mockRoutes.length === 0) {
       mockRoutes = loadRoutesFromLocalStorage();
     }
+    return [...mockRoutes];
   }
-  
-  return [...mockRoutes];
 };
 
 // Initialize routes when this module is imported

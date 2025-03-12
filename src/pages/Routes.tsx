@@ -1,7 +1,8 @@
+
 import React, { useState, useEffect } from 'react';
 import { ArrowRight, Calendar, Users, Search, MapPin } from 'lucide-react';
 import { toast } from 'sonner';
-import { tunisianProvinces, getRoutes, BusRoute } from '@/frontend/utils/data';
+import { tunisianProvinces, getRoutesSync, BusRoute } from '@/frontend/utils/data';
 import { useLanguage } from '@/context/LanguageContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -21,15 +22,40 @@ const Routes: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [routes, setRoutes] = useState<BusRoute[]>([]);
   const [filteredRoutes, setFilteredRoutes] = useState<BusRoute[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const allRoutes = getRoutes();
-    setRoutes(allRoutes);
-    setFilteredRoutes(allRoutes);
+    loadRoutes();
   }, []);
 
+  const loadRoutes = async () => {
+    setIsLoading(true);
+    try {
+      // Use synchronous version for immediate UI
+      const initialRoutes = getRoutesSync();
+      setRoutes(initialRoutes);
+      setFilteredRoutes(initialRoutes);
+      
+      // Then try to fetch from API
+      try {
+        const response = await fetch('/api/routes');
+        if (response.ok) {
+          const freshRoutes = await response.json();
+          setRoutes(freshRoutes);
+          setFilteredRoutes(freshRoutes);
+        }
+      } catch (error) {
+        console.error('Failed to fetch from API, using local data', error);
+      }
+    } catch (error) {
+      console.error('Error loading routes:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleSearch = () => {
-    let results = getRoutes();
+    let results = [...routes];
 
     if (departure) {
       results = results.filter(route =>

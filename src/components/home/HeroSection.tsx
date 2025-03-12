@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { useLanguage } from '@/context/LanguageContext';
 import { cn } from '@/lib/utils';
-import { getRoutes, BusRoute } from '@/frontend/utils/data';
+import { getRoutesSync, BusRoute } from '@/frontend/utils/data';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 
@@ -39,7 +39,7 @@ const HeroSection: React.FC<HeroSectionProps> = ({ loaded }) => {
     }
     
     // Filter routes based on search criteria
-    const allRoutes = getRoutes();
+    const allRoutes = getRoutesSync();
     const filtered = allRoutes.filter(route => 
       route.departure.toLowerCase() === departure.toLowerCase() &&
       route.destination.toLowerCase() === destination.toLowerCase() &&
