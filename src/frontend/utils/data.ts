@@ -97,8 +97,23 @@ const defaultRoutes: BusRoute[] = [
   },
 ];
 
-// Load routes from localStorage or use default ones
-const loadRoutes = (): BusRoute[] => {
+// Function to fetch routes from the server API
+const fetchRoutesFromAPI = async (): Promise<BusRoute[]> => {
+  try {
+    const response = await fetch('/api/routes');
+    if (!response.ok) {
+      throw new Error('Failed to fetch routes from API');
+    }
+    return await response.json();
+  } catch (error) {
+    console.error('Error fetching routes from API:', error);
+    // Fall back to localStorage if API fails
+    return loadRoutesFromLocalStorage();
+  }
+};
+
+// Load routes from localStorage
+const loadRoutesFromLocalStorage = (): BusRoute[] => {
   const savedRoutes = localStorage.getItem('tunisbus_routes');
   if (savedRoutes) {
     try {
@@ -111,41 +126,147 @@ const loadRoutes = (): BusRoute[] => {
   return [...defaultRoutes];
 };
 
-// Global storage for routes, initialized with loaded routes
-let mockRoutes: BusRoute[] = loadRoutes();
+// Global storage for routes
+let mockRoutes: BusRoute[] = [];
+
+// Initialize routes from API if possible, otherwise from localStorage
+const initializeRoutes = async () => {
+  try {
+    mockRoutes = await fetchRoutesFromAPI();
+  } catch (error) {
+    console.error('Failed to initialize routes from API:', error);
+    mockRoutes = loadRoutesFromLocalStorage();
+  }
+  // Also save to localStorage as a backup
+  saveRoutesToLocalStorage();
+  return mockRoutes;
+};
 
 // Save routes to localStorage with proper error handling
-const saveRoutes = () => {
+const saveRoutesToLocalStorage = () => {
   try {
     localStorage.setItem('tunisbus_routes', JSON.stringify(mockRoutes));
-    console.log('Routes saved successfully:', mockRoutes.length, 'routes');
+    console.log('Routes saved successfully to localStorage:', mockRoutes.length, 'routes');
   } catch (error) {
     console.error('Error saving routes to localStorage:', error);
   }
 };
 
-export const addRoute = (route: Omit<BusRoute, 'id'>): string => {
-  const id = Date.now().toString();
-  const newRoute = { id, ...route };
-  mockRoutes = [...mockRoutes, newRoute];
-  saveRoutes();
-  return id;
+// Add a new route
+export const addRoute = async (route: Omit<BusRoute, 'id'>): Promise<string> => {
+  try {
+    // Try to add the route to the database first
+    const response = await fetch('/api/routes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(route),
+    });
+    
+    if (!response.ok) {
+      throw new Error('Failed to add route to database');
+    }
+    
+    const data = await response.json();
+    
+    // Update local state after successful API call
+    mockRoutes = await fetchRoutesFromAPI();
+    saveRoutesToLocalStorage();
+    
+    return data.id;
+  } catch (error) {
+    console.error('Error adding route to database:', error);
+    
+    // Fallback to local storage in case of API failure
+    const id = Date.now().toString();
+    const newRoute = { id, ...route };
+    mockRoutes = [...mockRoutes, newRoute];
+    saveRoutesToLocalStorage();
+    
+    return id;
+  }
 };
 
-export const updateRoute = (id: string, routeData: Omit<BusRoute, 'id'>) => {
-  mockRoutes = mockRoutes.map(route => 
-    route.id === id ? { ...route, ...routeData } : route
-  );
-  saveRoutes();
+// Update an existing route
+export const updateRoute = async (id: string, routeData: Omit<BusRoute, 'id'>) => {
+  try {
+    // Try to update the route in the database first
+    const response = await fetch(`/api/routes/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(routeData),
+    });
+    
+    if (!response.ok) {
+      throw new Error('Failed to update route in database');
+    }
+    
+    // Update local state after successful API call
+    mockRoutes = await fetchRoutesFromAPI();
+    saveRoutesToLocalStorage();
+  } catch (error) {
+    console.error('Error updating route in database:', error);
+    
+    // Fallback to local storage in case of API failure
+    mockRoutes = mockRoutes.map(route => 
+      route.id === id ? { ...route, ...routeData } : route
+    );
+    saveRoutesToLocalStorage();
+  }
 };
 
-export const deleteRoute = (id: string) => {
-  mockRoutes = mockRoutes.filter(route => route.id !== id);
-  saveRoutes();
+// Delete a route
+export const deleteRoute = async (id: string) => {
+  try {
+    // Try to delete the route from the database first
+    const response = await fetch(`/api/routes/${id}`, {
+      method: 'DELETE',
+    });
+    
+    if (!response.ok) {
+      throw new Error('Failed to delete route from database');
+    }
+    
+    // Update local state after successful API call
+    mockRoutes = await fetchRoutesFromAPI();
+    saveRoutesToLocalStorage();
+  } catch (error) {
+    console.error('Error deleting route from database:', error);
+    
+    // Fallback to local storage in case of API failure
+    mockRoutes = mockRoutes.filter(route => route.id !== id);
+    saveRoutesToLocalStorage();
+  }
 };
 
-export const getRoutes = (): BusRoute[] => {
-  // Always reload from localStorage to ensure we have the latest data
-  mockRoutes = loadRoutes();
+// Get all routes
+export const getRoutes = async (): Promise<BusRoute[]> => {
+  try {
+    // Try to get the latest routes from the database
+    mockRoutes = await fetchRoutesFromAPI();
+    saveRoutesToLocalStorage();
+  } catch (error) {
+    console.error('Error getting routes from database:', error);
+    
+    // If API fails, use the local routes
+    if (mockRoutes.length === 0) {
+      mockRoutes = loadRoutesFromLocalStorage();
+    }
+  }
+  
+  return [...mockRoutes];
+};
+
+// Initialize routes when this module is imported
+initializeRoutes().catch(error => {
+  console.error('Failed to initialize routes:', error);
+  // Fallback to localStorage
+  mockRoutes = loadRoutesFromLocalStorage();
+});
+
+// Synchronous version of getRoutes for components that can't use async
+export const getRoutesSync = (): BusRoute[] => {
+  if (mockRoutes.length === 0) {
+    mockRoutes = loadRoutesFromLocalStorage();
+  }
   return [...mockRoutes];
 };

@@ -9,7 +9,7 @@ import RouteManagement from '@/components/dashboard/RouteManagement';
 import DeleteRouteDialog from '@/components/dashboard/DeleteRouteDialog';
 import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/context/LanguageContext';
-import { BusRoute, getRoutes, addRoute, updateRoute, deleteRoute } from '@/frontend/utils/data';
+import { BusRoute, getRoutesSync, addRoute, updateRoute, deleteRoute } from '@/frontend/utils/data';
 import { Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
@@ -25,6 +25,7 @@ const AdminDashboard: React.FC = () => {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deletingRouteId, setDeletingRouteId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
   // Load routes on initial render
   useEffect(() => {
@@ -36,11 +37,25 @@ const AdminDashboard: React.FC = () => {
     handleSearch();
   }, [searchTerm, routes]);
 
-  // Function to load routes from storage
-  const loadRoutes = () => {
-    const loadedRoutes = getRoutes();
-    setRoutes(loadedRoutes);
-    console.log('Routes loaded:', loadedRoutes.length);
+  // Function to load routes from API
+  const loadRoutes = async () => {
+    setIsLoading(true);
+    try {
+      // Use the non-async version initially for faster loading
+      const initialRoutes = getRoutesSync();
+      setRoutes(initialRoutes);
+      setFilteredRoutes(initialRoutes);
+      
+      // Then fetch the latest data from API
+      const freshRoutes = await Promise.resolve().then(() => getRoutesSync());
+      setRoutes(freshRoutes);
+      console.log('Routes loaded:', freshRoutes.length);
+    } catch (error) {
+      console.error('Error loading routes:', error);
+      toast.error(t('admin.notifications.errorLoadingRoutes'));
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleSearch = () => {
@@ -81,29 +96,44 @@ const AdminDashboard: React.FC = () => {
     setDeleteDialogOpen(true);
   };
 
-  const handleDeleteConfirm = () => {
+  const handleDeleteConfirm = async () => {
     if (deletingRouteId) {
-      deleteRoute(deletingRouteId);
-      loadRoutes(); // Reload routes after deletion
-      
-      toast.success(t('admin.notifications.routeDeleted'));
-      setDeleteDialogOpen(false);
-      setDeletingRouteId(null);
+      setIsLoading(true);
+      try {
+        await deleteRoute(deletingRouteId);
+        await loadRoutes(); // Reload routes after deletion
+        toast.success(t('admin.notifications.routeDeleted'));
+      } catch (error) {
+        console.error('Error deleting route:', error);
+        toast.error(t('admin.notifications.errorDeletingRoute'));
+      } finally {
+        setIsLoading(false);
+        setDeleteDialogOpen(false);
+        setDeletingRouteId(null);
+      }
     }
   };
 
-  const handleSubmitRoute = (routeData: Omit<BusRoute, 'id'>) => {
-    if (editingRouteId) {
-      updateRoute(editingRouteId, routeData);
-      loadRoutes(); // Reload routes after update
-      toast.success(t('admin.notifications.routeUpdated'));
-    } else {
-      const newId = addRoute(routeData);
-      loadRoutes(); // Reload routes after adding
-      toast.success(t('admin.notifications.routeAdded'));
+  const handleSubmitRoute = async (routeData: Omit<BusRoute, 'id'>) => {
+    setIsLoading(true);
+    try {
+      if (editingRouteId) {
+        await updateRoute(editingRouteId, routeData);
+        await loadRoutes(); // Reload routes after update
+        toast.success(t('admin.notifications.routeUpdated'));
+      } else {
+        const newId = await addRoute(routeData);
+        await loadRoutes(); // Reload routes after adding
+        toast.success(t('admin.notifications.routeAdded'));
+      }
+      setShowForm(false);
+      setEditingRouteId(null);
+    } catch (error) {
+      console.error('Error saving route:', error);
+      toast.error(t('admin.notifications.errorSavingRoute'));
+    } finally {
+      setIsLoading(false);
     }
-    setShowForm(false);
-    setEditingRouteId(null);
   };
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -134,6 +164,7 @@ const AdminDashboard: React.FC = () => {
           onSearchChange={handleSearchChange}
           onEdit={handleEditRoute}
           onDelete={handleDeleteClick}
+          isLoading={isLoading}
         />
       </div>
 

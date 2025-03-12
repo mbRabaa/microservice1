@@ -1,9 +1,11 @@
+
 import React from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import RouteTable from '@/components/RouteTable';
 import { BusRoute } from '@/frontend/utils/data';
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface RouteManagementProps {
   filteredRoutes: BusRoute[];
@@ -11,6 +13,7 @@ interface RouteManagementProps {
   onSearchChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
+  isLoading?: boolean;
 }
 
 const RouteManagement: React.FC<RouteManagementProps> = ({
@@ -19,6 +22,7 @@ const RouteManagement: React.FC<RouteManagementProps> = ({
   onSearchChange,
   onEdit,
   onDelete,
+  isLoading = false
 }) => {
   return (
     <div className="mb-8">
@@ -39,11 +43,19 @@ const RouteManagement: React.FC<RouteManagementProps> = ({
           </div>
         </CardHeader>
         <CardContent>
-          <RouteTable
-            routes={filteredRoutes}
-            onEdit={onEdit}
-            onDelete={onDelete}
-          />
+          {isLoading ? (
+            <div className="space-y-4">
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-10 w-full" />
+            </div>
+          ) : (
+            <RouteTable
+              routes={filteredRoutes}
+              onEdit={onEdit}
+              onDelete={onDelete}
+            />
+          )}
         </CardContent>
       </Card>
     </div>
