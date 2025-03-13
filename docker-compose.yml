@@ -1,0 +1,32 @@
+
+version: '3.8'
+
+services:
+  gestion_trajets:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gestion_trajets
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+    # When you add a database service, you can include it here
+    # depends_on:
+    #   - database
+    
+  # Example database service (uncomment and configure when needed)
+  # database:
+  #   image: postgres:14-alpine
+  #   container_name: tunisbus_db
+  #   environment:
+  #     POSTGRES_USER: tunisbus
+  #     POSTGRES_PASSWORD: tunisbus
+  #     POSTGRES_DB: tunisbusdb
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   ports:
+  #     - "5432:5432"
+  #   restart: unless-stopped
+
+# volumes:
+#   postgres_data:

@@ -54,10 +54,32 @@ docker-compose down
 
 ```sh
 # Build the Docker image
-docker build -t tunisbus-harmony-scheduler .
+docker build -t gestion_trajets .
 
 # Run the container
-docker run -p 8080:8080 -p 5000:5000 --env-file .env tunisbus-harmony-scheduler
+docker run -p 8080:80 gestion_trajets
+```
+
+### Microservices
+
+#### gestion_trajets
+
+This microservice handles route management for TunisBus. It provides the following functionality:
+
+- View all available bus routes
+- Admin dashboard for route management (add, edit, delete routes)
+- Search and filter bus routes
+- Responsive design for all devices
+
+To build and run this microservice:
+
+```sh
+# Using Docker Compose
+docker-compose up -d gestion_trajets
+
+# Or manually
+docker build -t gestion_trajets .
+docker run -p 8080:80 gestion_trajets
 ```
 
 ## Features
@@ -73,4 +95,3 @@ docker run -p 8080:8080 -p 5000:5000 --env-file .env tunisbus-harmony-scheduler
 - Frontend: Vite, TypeScript, React, shadcn-ui, Tailwind CSS
 - Backend: Node.js, Express.js, PostgreSQL
 - Infrastructure: Docker, Docker Compose
-"# billets-" 
