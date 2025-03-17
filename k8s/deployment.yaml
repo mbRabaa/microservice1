@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gestion-trajet
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: gestion-trajet
+  template:
+    metadata:
+      labels:
+        app: gestion-trajet
+    spec:
+      containers:
+        - name: gestion-trajet
+          image: mbrabaa2023/gestion_trajet:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
