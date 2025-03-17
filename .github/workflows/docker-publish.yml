@@ -1,4 +1,4 @@
-name: CI/CD - Docker Build, Deploy & Kubernetes
+name: CI/CD - Docker & K3s Deployment
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - main
 
 jobs:
-  # Étape 1 : Test du code
+  # Étape 1 : Tests et linting
   test-before-build:
     runs-on: ubuntu-latest
     steps:
@@ -22,10 +22,10 @@ jobs:
       - name: 🔍 Linting du code
         run: npm run lint
 
-  # Étape 2 : Construire et pousser l'image Docker
+  # Étape 2 : Build & Push Docker
   build-and-push:
     runs-on: ubuntu-latest
-    needs: test-before-build  # Exécuter uniquement si les tests unitaires passent
+    needs: test-before-build
     steps:
       - name: 🛎️ Checkout du code
         uses: actions/checkout@v3
@@ -34,60 +34,42 @@ jobs:
         run: echo "${{ secrets.DOCKER_TOKEN }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
 
       - name: 🔨 Construire l'image Docker
-        run: |
-          docker build -t ${{ secrets.DOCKER_USERNAME }}/gestion_trajet:latest .
+        run: docker build -t ${{ secrets.DOCKER_USERNAME }}/gestion_trajet:latest .
 
       - name: 🚀 Pousser l'image sur Docker Hub
-        run: |
-          docker push ${{ secrets.DOCKER_USERNAME }}/gestion_trajet:latest
+        run: docker push ${{ secrets.DOCKER_USERNAME }}/gestion_trajet:latest
 
-  # Étape 3 : Déployer sur Kubernetes
-  deploy-to-k8s:
+  # Étape 3 : Déploiement sur K3s
+  deploy-to-k3s:
     runs-on: ubuntu-latest
-    needs: build-and-push  # Exécuter après la construction et le push de l'image
+    needs: build-and-push
     steps:
       - name: 🛎️ Checkout du code
         uses: actions/checkout@v3
 
-      - name: 🔑 Se connecter à Kubernetes
+      - name: 🔧 Installer K3s
         run: |
-          echo "${{ secrets.KUBE_CONFIG }}" > kube_config.yaml  # Charger le fichier kubeconfig à partir des secrets
-          export KUBECONFIG=kube_config.yaml
+          curl -sfL https://get.k3s.io | sh -
+          sudo chmod 644 /etc/rancher/k3s/k3s.yaml
 
-      - name: Deploy to Kubernetes
+      - name: 🔑 Configurer KUBECONFIG
         run: |
-          kubectl apply -f k8s/deployment.yaml  # Déployer le backend sur Kubernetes
-          kubectl apply -f k8s/service.yaml  # Déployer les services Kubernetes
+          mkdir -p $HOME/.kube
+          sudo cp /etc/rancher/k3s/k3s.yaml $HOME/.kube/config
+          sudo chown $(id -u):$(id -g) $HOME/.kube/config
 
-  # Étape 4 : Vérification de la santé des pods Kubernetes
-  verify-k8s-health:
-    runs-on: ubuntu-latest
-    needs: deploy-to-k8s  # Exécuter après le déploiement Kubernetes
-    steps:
-      - name: 🛎️ Checkout du code
-        uses: actions/checkout@v3
-
-      - name: 🔑 Se connecter à Kubernetes
+      - name: 🚀 Déployer sur K3s
         run: |
-          echo "${{ secrets.KUBE_CONFIG }}" > kube_config.yaml  # Charger le fichier kubeconfig à partir des secrets
-          export KUBECONFIG=kube_config.yaml
+          kubectl apply -f k8s/deployment.yaml
+          kubectl apply -f k8s/service.yaml
+          kubectl apply -f k8s/ingress.yaml
 
-      - name: Vérifier la santé des services et des pods
-        run: |
-          kubectl get pods  # Vérifier si tous les pods sont bien en cours d'exécution
-          kubectl describe pod <pod-name>  # Décrire un pod particulier pour voir sa santé
+      - name: 🏥 Vérifier les Pods
+        run: kubectl get pods -o wide
 
-  # Étape 5 : Déploiement en production (optionnel)
-  deploy-production:
-    runs-on: ubuntu-latest
-    needs: verify-k8s-health  # Exécuter après avoir vérifié la santé des pods
-    steps:
-      - name: 🛎️ Checkout du code
-        uses: actions/checkout@v3
+      - name: 📡 Vérifier les Services
+        run: kubectl get svc gestion-trajet-service
 
-      - name: 🔑 Se connecter à Docker Hub
-        run: echo "${{ secrets.DOCKER_TOKEN }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+      - name: 🌍 Vérifier l'Ingress
+        run: kubectl get ingress
 
-      - name: 🚢 Déployer le conteneur Docker en production
-        run: |
-          kubectl apply -f k8s/production-deployment.yaml  # Déployer en production sur Kubernetes
