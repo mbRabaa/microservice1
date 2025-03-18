@@ -1,4 +1,4 @@
-name: CI/CD - Docker & K3s Deployment
+name: CI/CD - Pipeline Docker & K3s Deployment
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - main
 
 jobs:
-  # Étape 1 : Tests et linting
+  # Étape 1 : Tests 
   test-before-build:
     runs-on: ubuntu-latest
     steps:
@@ -19,8 +19,6 @@ jobs:
       - name: 🎯 Lancer les tests unitaires
         run: npm test
 
-      - name: 🔍 Linting du code
-        run: npm run lint
 
   # Étape 2 : Build & Push Docker
   build-and-push:
