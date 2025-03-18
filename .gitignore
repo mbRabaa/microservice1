@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+actions-runner/externals/node20_alpine/bin/node
+actions-runner/externals/node20/bin/node
+actions-runner/actions-runner-linux-x64-2.322.0.tar.gz
