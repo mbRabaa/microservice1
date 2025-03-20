@@ -1,4 +1,4 @@
-name: CI/CD - Pipeline DevOps & K3s Deployment 
+name: CI/CD - Pipeline DevOps & K3s Deployment
 
 on:
   push:
@@ -6,12 +6,14 @@ on:
       - main
 
 jobs:
-  # Étape 1 : Tests 
+  # Étape 1 : Tests et analyse SonarQube
   test-before-build:
     runs-on: ubuntu-latest
     steps:
       - name: 🛎️ Checkout du code
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # Nécessaire pour une analyse SonarQube précise
 
       - name: 📦 Installer les dépendances
         run: npm install
@@ -19,6 +21,18 @@ jobs:
       - name: 🎯 Lancer les tests unitaires
         run: npm test
 
+      - name: 🔍 Analyser la qualité du code avec SonarQube
+        uses: SonarSource/sonarqube-scan-action@v4
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+      # Optionnel : Vérifier la Quality Gate
+      - name: 🚦 Vérifier la Quality Gate
+        uses: SonarSource/sonarqube-quality-gate-action@v1
+        timeout-minutes: 5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
   # Étape 2 : Build & Push Docker
   build-and-push:
@@ -70,4 +84,3 @@ jobs:
 
       - name: 🌍 Vérifier l'Ingress
         run: kubectl get ingress
-
