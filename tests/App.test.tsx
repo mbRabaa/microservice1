@@ -1,36 +1,29 @@
-import { test, expect, vi, beforeEach, beforeAll, afterAll, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
-import App from '../src/App';
 import React from 'react';
-import '@testing-library/jest-dom';
-import { LanguageProvider } from '@/context/LanguageContext';
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import '@testing-library/jest-dom/vitest';
+import App from '../src/App';
 import { server } from './setup';
 
-// Mock localStorage
-beforeEach(() => {
-  localStorage.clear();
-  localStorage.setItem('user', 'Rabaa');
+beforeAll(() => {
+  server.listen();
+  console.log('Mock server started');
 });
 
-// Start the mock server
-beforeAll(() => server.listen());
-afterEach(() => server.resetHandlers());
-afterAll(() => server.close());
+afterAll(() => {
+  server.close();
+  console.log('Mock server stopped');
+});
 
-test("Vérifie que le texte s'affiche", async () => {
-  render(
-    <LanguageProvider>
-      <App />
-    </LanguageProvider>
-  );
+afterEach(() => {
+  server.resetHandlers();
+});
 
-  // Debug the rendered output
-  screen.debug();
+describe('App', () => {
+  it('renders correctly', async () => {
+    render(<App />);
 
-  // Verify localStorage
-  expect(localStorage.getItem('user')).toBe('Rabaa');
-
-  // Check for the text
-  const textElement = await screen.findByText(/Bonjour Rabaa/i);
-  expect(textElement).toBeInTheDocument();
+    const departure = await screen.findByText(/Nos Services/i);
+    expect(departure).toBeInTheDocument();
+  });
 });

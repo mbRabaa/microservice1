@@ -1,4 +1,4 @@
-name: CI/CD - Pipeline Docker & K3s Deployment
+name: CI/CD - Pipeline DevOps & K3s Deployment 
 
 on:
   push:
