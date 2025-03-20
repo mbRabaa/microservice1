@@ -1,4 +1,4 @@
-name: CI/CD - Pipeline DevOps & K3s Deployment
+name: CI/CD - Pipeline DevOps & K3s Deployment CI/CD/SonarQube
 
 on:
   push:
@@ -27,7 +27,7 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
-      # Optionnel : Vérifier la Quality Gate
+      # Optionnel : Vérifiernan la Quality Gate
       - name: 🚦 Vérifier la Quality Gate
         uses: SonarSource/sonarqube-quality-gate-action@v1
         timeout-minutes: 5
