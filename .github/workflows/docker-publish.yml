@@ -6,7 +6,6 @@ on:
       - main
 
 jobs:
-  # Étape 1 : Tests et analyse SonarQube
   test-before-build:
     runs-on: ubuntu-latest
     services:
@@ -41,7 +40,6 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
-  # Étape 2 : Build & Push Docker
   build-and-push:
     runs-on: ubuntu-latest
     needs: test-before-build
@@ -58,7 +56,6 @@ jobs:
       - name: 🚀 Pousser l'image sur Docker Hub
         run: docker push ${{ secrets.DOCKER_USERNAME }}/gestion_trajet:latest
 
-  # Étape 3 : Déploiement sur K3s
   deploy-to-k3s:
     runs-on: ubuntu-latest
     needs: build-and-push
