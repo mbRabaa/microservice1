@@ -1,4 +1,4 @@
-name: CI/CD - Pipeline DevOps & K3s Deployment CI/CD/SonarQube
+name: CI/CD - Pipeline DevOps & K3s Deployment
 
 on:
   push:
@@ -9,6 +9,13 @@ jobs:
   # Étape 1 : Tests et analyse SonarQube
   test-before-build:
     runs-on: ubuntu-latest
+    services:
+      sonarqube:
+        image: sonarqube:latest
+        ports:
+          - 9000:9000
+        env:
+          SONAR_ES_BOOTSTRAP_CHECKS_DISABLE: true  # Désactive les vérifications Elasticsearch pour accélérer le démarrage
     steps:
       - name: 🛎️ Checkout du code
         uses: actions/checkout@v3
@@ -25,9 +32,9 @@ jobs:
         uses: SonarSource/sonarqube-scan-action@v4
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_HOST_URL: http://localhost:9000
 
-      # Optionnel : Vérifiernan la Quality Gate
+      # Optionnel : Vérifier la Quality Gate
       - name: 🚦 Vérifier la Quality Gate
         uses: SonarSource/sonarqube-quality-gate-action@v1
         timeout-minutes: 5
