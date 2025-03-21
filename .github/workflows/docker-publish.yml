@@ -14,12 +14,12 @@ jobs:
         ports:
           - 9000:9000
         env:
-          SONAR_ES_BOOTSTRAP_CHECKS_DISABLE: true  # Désactive les vérifications Elasticsearch pour accélérer le démarrage
+          SONAR_ES_BOOTSTRAP_CHECKS_DISABLE: true
     steps:
       - name: 🛎️ Checkout du code
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0  # Nécessaire pour une analyse SonarQube précise
+          fetch-depth: 0
 
       - name: 📦 Installer les dépendances
         run: npm install
@@ -33,7 +33,6 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: http://localhost:9000
 
-      # Optionnel : Vérifier la Quality Gate
       - name: 🚦 Vérifier la Quality Gate
         uses: SonarSource/sonarqube-quality-gate-action@v1
         timeout-minutes: 5
