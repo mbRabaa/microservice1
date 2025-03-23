@@ -16,75 +16,98 @@ jobs:
         env:
           SONAR_ES_BOOTSTRAP_CHECKS_DISABLE: true  # Désactive les vérifications Elasticsearch pour accélérer le démarrage
     steps:
+      # Étape 1 : Checkout du code
       - name: 🛎️ Checkout du code
         uses: actions/checkout@v3
         with:
           fetch-depth: 0  # Nécessaire pour une analyse SonarQube précise
 
+      # Étape 2 : Installer les dépendances
       - name: 📦 Installer les dépendances
         run: npm install
 
+      # Étape 3 : Lancer les tests unitaires
       - name: 🎯 Lancer les tests unitaires
         run: npm test
 
+      # Étape 4 : Attendre que SonarQube soit prêt
+      - name: ⏳ Attendre que SonarQube soit prêt
+        run: |
+          until curl -f http://localhost:9000/api/server/version; do
+            echo "En attente du démarrage de SonarQube..."
+            sleep 5
+          done
+
+      # Étape 5 : Analyser la qualité du code avec SonarQube
       - name: 🔍 Analyser la qualité du code avec SonarQube
         uses: SonarSource/sonarqube-scan-action@v4
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: http://localhost:9000
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}  # Token SonarQube
+          SONAR_HOST_URL: http://localhost:9000  # URL de SonarQube
 
-      # Optionnel : Vérifier la Quality Gate
+      # Étape 6 : Vérifier la Quality Gate
       - name: 🚦 Vérifier la Quality Gate
         uses: SonarSource/sonarqube-quality-gate-action@v1
         timeout-minutes: 5
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}  # Token SonarQube
 
   build-and-push:
     runs-on: ubuntu-latest
-    needs: test-before-build
+    needs: test-before-build  # Dépend de l'étape "test-before-build"
     steps:
+      # Étape 1 : Checkout du code
       - name: 🛎️ Checkout du code
         uses: actions/checkout@v3
 
+      # Étape 2 : Connexion à Docker Hub
       - name: 🔑 Connexion à Docker Hub
         run: echo "${{ secrets.DOCKER_TOKEN }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
 
+      # Étape 3 : Construire l'image Docker
       - name: 🔨 Construire l'image Docker
         run: docker build -t ${{ secrets.DOCKER_USERNAME }}/gestion_trajet:latest .
 
+      # Étape 4 : Pousser l'image sur Docker Hub
       - name: 🚀 Pousser l'image sur Docker Hub
         run: docker push ${{ secrets.DOCKER_USERNAME }}/gestion_trajet:latest
 
   deploy-to-k3s:
     runs-on: ubuntu-latest
-    needs: build-and-push
+    needs: build-and-push  # Dépend de l'étape "build-and-push"
     steps:
+      # Étape 1 : Checkout du code
       - name: 🛎️ Checkout du code
         uses: actions/checkout@v3
 
+      # Étape 2 : Installer K3s
       - name: 🔧 Installer K3s
         run: |
           curl -sfL https://get.k3s.io | sh -
           sudo chmod 644 /etc/rancher/k3s/k3s.yaml
 
+      # Étape 3 : Configurer KUBECONFIG
       - name: 🔑 Configurer KUBECONFIG
         run: |
           mkdir -p $HOME/.kube
           sudo cp /etc/rancher/k3s/k3s.yaml $HOME/.kube/config
           sudo chown $(id -u):$(id -g) $HOME/.kube/config
 
+      # Étape 4 : Déployer sur K3s
       - name: 🚀 Déployer sur K3s
         run: |
           kubectl apply -f k8s/deployment.yaml
           kubectl apply -f k8s/service.yaml
           kubectl apply -f k8s/ingress.yaml
 
+      # Étape 5 : Vérifier les Pods
       - name: 🏥 Vérifier les Pods
         run: kubectl get pods -o wide
 
+      # Étape 6 : Vérifier les Services
       - name: 📡 Vérifier les Services
         run: kubectl get svc gestion-trajet-service
 
+      # Étape 7 : Vérifier l'Ingress
       - name: 🌍 Vérifier l'Ingress
         run: kubectl get ingress
