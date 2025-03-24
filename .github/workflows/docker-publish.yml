@@ -5,121 +5,85 @@ on:
     branches:
       - main
 
-env:
-  DOCKER_IMAGE_NAME: gestion_trajet
-  K3S_CONFIG_PATH: $HOME/.kube/config
-
 jobs:
   sonarqube-analysis:
-    name: Analyse de code avec SonarQube
+    name: Analyse SonarQube
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     
-    services:
-      sonarqube:
-        image: sonarqube:9.9.1-community
-        ports:
-          - 9000:9000
-        env:
-          SONAR_ES_BOOTSTRAP_CHECKS_DISABLE: "true"
-          SONAR_WEB_JAVAOPTS: "-Xmx1g -Xms512m"
-        options: >-
-          --health-cmd "curl -f http://localhost:9000/api/system/status | grep -q '\"status\":\"UP\"' || exit 1"
-          --health-interval 30s
-          --health-timeout 20s
-          --health-retries 15
-          --memory 3g
-          --cpus 2
-          --health-start-period 180s
-
+    # Solution alternative sans service container
     steps:
       - name: 🛎️ Checkout du code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: 🩺 Pré-diagnostics SonarQube
+      - name: 🐳 Démarrer SonarQube dans un conteneur
         run: |
-          echo "=== Pré-vérification ==="
-          docker info
-          echo "======================="
+          docker run -d \
+            --name sonarqube \
+            -p 9000:9000 \
+            -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true \
+            -e SONAR_WEB_JAVAOPTS="-Xmx1g -Xms512m" \
+            -e SONAR_SEARCH_JAVAOPTS="-Xmx512m -Xms256m" \
+            --memory 3g \
+            --cpus 2 \
+            sonarqube:9.9.1-community
+          
+          echo "SonarQube container démarré, attente du démarrage complet..."
+          timeout 600 bash -c 'while ! curl -sSf http://localhost:9000/api/system/status | grep -q "\"status\":\"UP\""; do
+            sleep 10
+            echo "En attente du démarrage de SonarQube..."
+          done'
+          echo "SonarQube est prêt!"
 
       - name: 📦 Installer les dépendances
         run: npm install
 
-      - name: 🧪 Exécuter les tests unitaires
+      - name: 🧪 Exécuter les tests
         run: npm test
 
-      - name: ⏳ Attendre démarrage SonarQube (20 min max)
-        timeout-minutes: 20
-        run: |
-          echo "Vérification du statut SonarQube..."
-          for i in {1..40}; do
-            status=$(curl -sS http://localhost:9000/api/system/status | jq -r '.status' 2>/dev/null || echo "STARTING")
-            if [ "$status" = "UP" ]; then
-              echo "SonarQube prêt après $((i*30)) secondes"
-              exit 0
-            fi
-            echo "Statut actuel: $status (attente $((i*30))s)"
-            sleep 30
-          done
-          echo "Échec: SonarQube non prêt après 20 minutes"
-          exit 1
-
-      - name: 📜 Afficher logs SonarQube
-        if: always()
-        run: |
-          echo "=== Logs SonarQube ==="
-          docker logs $(docker ps -aq --filter ancestor=sonarqube:9.9.1-community) || true
-          echo "======================"
-
-      - name: 🔍 Analyse de code
+      - name: 🔍 Exécuter l'analyse SonarQube
         uses: SonarSource/sonarqube-scan-action@v4
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: http://localhost:9000
           SONAR_SCANNER_OPTS: "-Xmx1024m"
 
-      - name: 🚦 Vérification Quality Gate
+      - name: 🚦 Vérifier Quality Gate
         uses: SonarSource/sonarqube-quality-gate-action@v1
         timeout-minutes: 10
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
-  build-and-push:
-    name: Construction et déploiement Docker
+      - name: 🧹 Nettoyer le conteneur SonarQube
+        if: always()
+        run: |
+          docker stop sonarqube || true
+          docker rm sonarqube || true
+
+  build-and-deploy:
+    name: Build et Déploiement
     needs: sonarqube-analysis
     runs-on: ubuntu-latest
-    
     steps:
       - name: 🛎️ Checkout du code
         uses: actions/checkout@v4
 
-      - name: 🔑 Authentification Docker Hub
-        run: |
-          echo "${{ secrets.DOCKER_TOKEN }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+      - name: 🔐 Login Docker Hub
+        run: echo "${{ secrets.DOCKER_TOKEN }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
 
-      - name: 🏗️ Construire l'image Docker
+      - name: 🏗️ Build Docker
         run: |
           docker build \
-            --tag ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:latest \
-            --tag ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:${{ github.sha }} \
+            -t ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:latest \
+            -t ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:${{ github.sha }} \
             .
 
-      - name: 🚀 Pousser l'image Docker
+      - name: 🚀 Push Docker
         run: |
-          docker push ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:latest
-          docker push ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}:${{ github.sha }}
-
-  deploy-to-k3s:
-    name: Déploiement sur K3s
-    needs: build-and-push
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    steps:
-      - name: 🛎️ Checkout du code
-        uses: actions/checkout@v4
+          docker push ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:latest
+          docker push ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:${{ github.sha }}
 
       - name: 🖥️ Installer K3s
         run: |
@@ -128,27 +92,19 @@ jobs:
 
       - name: ⚙️ Configurer kubectl
         run: |
-          mkdir -p $(dirname ${{ env.K3S_CONFIG_PATH }})
-          sudo cp /etc/rancher/k3s/k3s.yaml ${{ env.K3S_CONFIG_PATH }}
-          sudo chown $(id -u):$(id -g) ${{ env.K3S_CONFIG_PATH }}
-          sed -i 's/127.0.0.1/localhost/g' ${{ env.K3S_CONFIG_PATH }}
-          export KUBECONFIG=${{ env.K3S_CONFIG_PATH }}
+          mkdir -p $HOME/.kube
+          sudo cp /etc/rancher/k3s/k3s.yaml $HOME/.kube/config
+          sudo chown $(id -u):$(id -g) $HOME/.kube/config
+          sed -i 's/127.0.0.1/localhost/g' $HOME/.kube/config
 
-      - name: 📋 Vérifier l'installation
-        run: |
-          kubectl cluster-info
-          kubectl get nodes -o wide
-
-      - name: 🚀 Déployer l'application
+      - name: 🚀 Déployer sur K3s
         run: |
           kubectl apply -f k8s/deployment.yaml
           kubectl apply -f k8s/service.yaml
           kubectl apply -f k8s/ingress.yaml
+          kubectl rollout status deployment/gestion-trajet --timeout=300s
 
       - name: 🔍 Vérifier le déploiement
         run: |
-          kubectl get pods -o wide -w &
-          kubectl get svc -w &
-          kubectl get ingress -w &
-          sleep 30
-          kubectl get all
+          kubectl get all -n default
+          kubectl get ingress -n default
