@@ -11,31 +11,38 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     
-    # Solution alternative sans service container
     steps:
       - name: 🛎️ Checkout du code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # Nécessaire pour une analyse correcte
 
-      - name: 🐳 Démarrer SonarQube dans un conteneur
+      - name: 🐳 Démarrer SonarQube
         run: |
           docker run -d \
             --name sonarqube \
             -p 9000:9000 \
             -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true \
             -e SONAR_WEB_JAVAOPTS="-Xmx1g -Xms512m" \
-            -e SONAR_SEARCH_JAVAOPTS="-Xmx512m -Xms256m" \
             --memory 3g \
             --cpus 2 \
             sonarqube:9.9.1-community
           
-          echo "SonarQube container démarré, attente du démarrage complet..."
-          timeout 600 bash -c 'while ! curl -sSf http://localhost:9000/api/system/status | grep -q "\"status\":\"UP\""; do
+          # Attendre que SonarQube soit prêt
+          timeout 300 bash -c 'while ! curl -sSf http://localhost:9000/api/system/status | grep -q "\"status\":\"UP\""; do
             sleep 10
             echo "En attente du démarrage de SonarQube..."
           done'
-          echo "SonarQube est prêt!"
+
+      - name: 🔑 Générer un token SonarQube (admin/admin par défaut)
+        run: |
+          SONAR_TOKEN=$(curl -sS -u admin:admin \
+            -X POST "http://localhost:9000/api/user_tokens/generate" \
+            -d "name=github-action-$(date +%s)" \
+            | jq -r '.token')
+          
+          echo "SONAR_TOKEN=${SONAR_TOKEN}" >> $GITHUB_ENV
+          echo "Token généré avec succès"
 
       - name: 📦 Installer les dépendances
         run: npm install
@@ -43,24 +50,22 @@ jobs:
       - name: 🧪 Exécuter les tests
         run: npm test
 
-      - name: 🔍 Exécuter l'analyse SonarQube
+      - name: 🔍 Analyser avec SonarQube
         uses: SonarSource/sonarqube-scan-action@v4
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}  # Utilise le token généré
           SONAR_HOST_URL: http://localhost:9000
           SONAR_SCANNER_OPTS: "-Xmx1024m"
 
       - name: 🚦 Vérifier Quality Gate
         uses: SonarSource/sonarqube-quality-gate-action@v1
-        timeout-minutes: 10
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
 
-      - name: 🧹 Nettoyer le conteneur SonarQube
+      - name: 🧹 Nettoyer
         if: always()
-        run: |
-          docker stop sonarqube || true
-          docker rm sonarqube || true
+        run: docker rm -f sonarqube || true
+
 
   build-and-deploy:
     name: Build et Déploiement
