@@ -9,11 +9,23 @@ jobs:
   build:
     name: Build and analyze
     runs-on: ubuntu-latest
+    services:
+      sonarqube:
+        image: sonarqube:lts-community
+        ports:
+          - 9000:9000
+        env:
+          SONAR_ES_BOOTSTRAP_CHECKS_DISABLE: "true"
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/api/server/version || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 60  # Attendre jusqu'à 5 minutes (60 x 5s)
     
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
+          fetch-depth: 0
 
       # Étape 1 : Installer les dépendances
       - name: 📦 Installer les dépendances
@@ -23,84 +35,82 @@ jobs:
       - name: 🎯 Lancer les tests unitaires
         run: npm test
 
-      # Étape 3 : Attendre que SonarQube soit prêt
-      - name: ⏳ Attendre que SonarQube soit prêt
+      # Étape 3 : Attendre que SonarQube soit prêt (version robuste)
+      - name: ⏳ Attendre que SonarQube soit prêt (10 min max)
+        timeout-minutes: 10
         run: |
-          until curl -f http://localhost:9000/api/server/version; do
-            echo "En attente du démarrage de SonarQube..."
-            sleep 5
+          echo "Début de l'attente pour SonarQube..."
+          for i in {1..60}; do
+            if curl -sSf http://localhost:9000/api/server/version >/dev/null; then
+              echo "SonarQube est prêt!"
+              exit 0
+            fi
+            echo "Attente du démarrage de SonarQube (tentative $i/60)..."
+            sleep 10
           done
+          echo "Erreur: SonarQube n'a pas démarré dans le délai imparti"
+          exit 1
 
       # Étape 4 : Analyser la qualité du code avec SonarQube
       - name: 🔍 Analyser la qualité du code avec SonarQube
         uses: SonarSource/sonarqube-scan-action@v4
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}  # Token SonarQube
-          SONAR_HOST_URL: http://localhost:9000  # URL de SonarQube
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: http://localhost:9000
 
       # Étape 5 : Vérifier la Quality Gate
       - name: 🚦 Vérifier la Quality Gate
         uses: SonarSource/sonarqube-quality-gate-action@v1
-        timeout-minutes: 5
+        timeout-minutes: 10
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}  # Token SonarQube
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
   build-and-push:
     runs-on: ubuntu-latest
-    needs: build  # Dépend de l'étape "build"
+    needs: build
     steps:
-      # Étape 1 : Checkout du code
       - name: 🛎️ Checkout du code
         uses: actions/checkout@v3
 
-      # Étape 2 : Connexion à Docker Hub
       - name: 🔑 Connexion à Docker Hub
         run: echo "${{ secrets.DOCKER_TOKEN }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
 
-      # Étape 3 : Construire l'image Docker
       - name: 🔨 Construire l'image Docker
         run: docker build -t ${{ secrets.DOCKER_USERNAME }}/gestion_trajet:latest .
 
-      # Étape 4 : Pousser l'image sur Docker Hub
       - name: 🚀 Pousser l'image sur Docker Hub
         run: docker push ${{ secrets.DOCKER_USERNAME }}/gestion_trajet:latest
 
   deploy-to-k3s:
     runs-on: ubuntu-latest
-    needs: build-and-push  # Dépend de l'étape "build-and-push"
+    needs: build-and-push
     steps:
-      # Étape 1 : Checkout du code
       - name: 🛎️ Checkout du code
         uses: actions/checkout@v3
 
-      # Étape 2 : Installer K3s
       - name: 🔧 Installer K3s
+        timeout-minutes: 10
         run: |
           curl -sfL https://get.k3s.io | sh -
           sudo chmod 644 /etc/rancher/k3s/k3s.yaml
 
-      # Étape 3 : Configurer KUBECONFIG
       - name: 🔑 Configurer KUBECONFIG
         run: |
           mkdir -p $HOME/.kube
           sudo cp /etc/rancher/k3s/k3s.yaml $HOME/.kube/config
           sudo chown $(id -u):$(id -g) $HOME/.kube/config
 
-      # Étape 4 : Déployer sur K3s
       - name: 🚀 Déployer sur K3s
         run: |
           kubectl apply -f k8s/deployment.yaml
           kubectl apply -f k8s/service.yaml
           kubectl apply -f k8s/ingress.yaml
 
-      # Étape 5 : Vérifier les Pods
       - name: 🏥 Vérifier les Pods
         run: kubectl get pods -o wide
 
-      # Étape 6 : Vérifier les Services
       - name: 📡 Vérifier les Services
         run: kubectl get svc gestion-trajet-service
 
-      # Étape 7 : Vérifier l'Ingress
       - name: 🌍 Vérifier l'Ingress
         run: kubectl get ingress
