@@ -5,6 +5,9 @@ on:
     branches:
       - main
 
+env:
+  SONAR_HOST_URL: http://localhost:9000
+
 jobs:
   sonarqube-analysis:
     name: Analyse SonarQube
@@ -14,16 +17,41 @@ jobs:
     steps:
       - name: 🛎️ Checkout du code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: 🐳 Démarrer SonarQube
         run: |
-          docker run -d --name sonarqube -p 9000:9000 sonarqube:9.9.1-community
-          timeout 300 bash -c 'while ! curl -sSf http://localhost:9000/api/system/status | grep -q "\"status\":\"UP\""; do sleep 10; done'
+          docker run -d \
+            --name sonarqube \
+            -p 9000:9000 \
+            -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true \
+            sonarqube:9.9.1-community
+          timeout 300 bash -c 'while ! curl -sSf ${{ env.SONAR_HOST_URL }}/api/system/status | grep -q "\"status\":\"UP\""; do
+            sleep 10
+            echo "En attente du démarrage de SonarQube..."
+          done'
+
+      - name: 🔑 Générer un token SonarQube
+        id: sonar-token
+        run: |
+          SONAR_TOKEN=$(curl -sS -u admin:admin \
+            -X POST "${{ env.SONAR_HOST_URL }}/api/user_tokens/generate" \
+            -d "name=github-action-$(date +%s)" \
+            | jq -r '.token')
+          echo "SONAR_TOKEN=$SONAR_TOKEN" >> $GITHUB_ENV
+          echo "::add-mask::$SONAR_TOKEN"  # Masque le token dans les logs
 
       - name: 🔍 Analyser avec SonarQube
         uses: SonarSource/sonarqube-scan-action@v4
         env:
-          SONAR_HOST_URL: http://localhost:9000
+          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
+          SONAR_SCANNER_OPTS: "-Xmx1024m"
+
+      - name: 🧹 Nettoyer
+        if: always()
+        run: docker rm -f sonarqube || true
 
   terraform-deploy:
     name: Déploiement Terraform
@@ -40,14 +68,25 @@ jobs:
       - name: 🔐 Login Docker Hub
         run: echo "${{ secrets.DOCKER_TOKEN }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
 
-      - name: 🏗️ Build et Push Docker
+      - name: 🏗️ Build Docker
         run: |
-          docker build -t ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:${{ github.sha }} .
-          docker push ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:${{ github.sha }}
+          docker build \
+            -t ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:${{ github.sha }} \
+            -t ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:latest \
+            .
 
-      - name: 🖥️ Configurer K3s
+      - name: 🚀 Push Docker
         run: |
-          curl -sfL https://get.k3s.io | sh -
+          docker push ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:${{ github.sha }}
+          docker push ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:latest
+
+      - name: 🖥️ Installer K3s
+        run: |
+          curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.26.5+k3s1 sh -
+          sudo chmod 644 /etc/rancher/k3s/k3s.yaml
+
+      - name: ⚙️ Configurer kubectl
+        run: |
           mkdir -p $HOME/.kube
           sudo cp /etc/rancher/k3s/k3s.yaml $HOME/.kube/config
           sudo chown $(id -u):$(id -g) $HOME/.kube/config
