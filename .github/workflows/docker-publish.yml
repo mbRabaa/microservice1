@@ -1,4 +1,4 @@
-name: CI/CD - Pipeline DevOps & K3s Deployment
+name: CI/CD - Pipeline DevOps avec Terraform
 
 on:
   push:
@@ -6,128 +6,69 @@ on:
       - main
 
 jobs:
-  #######################################################################
-  # PHASE 1 : Analyse de code avec SonarQube (Quality Gate)
-  #######################################################################
   sonarqube-analysis:
     name: Analyse SonarQube
     runs-on: ubuntu-latest
     timeout-minutes: 30
     
     steps:
-      # Étape 1: Récupération du code source
       - name: 🛎️ Checkout du code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Nécessaire pour SonarQube
 
-      # Étape 2: Lancement d'un conteneur SonarQube
       - name: 🐳 Démarrer SonarQube
         run: |
-          docker run -d \
-            --name sonarqube \
-            -p 9000:9000 \
-            -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true \
-            -e SONAR_WEB_JAVAOPTS="-Xmx1g -Xms512m" \
-            --memory 3g \
-            --cpus 2 \
-            sonarqube:9.9.1-community
-          
-          # Attente du démarrage (300s max)
-          timeout 300 bash -c 'while ! curl -sSf http://localhost:9000/api/system/status | grep -q "\"status\":\"UP\""; do
-            sleep 10
-            echo "En attente du démarrage de SonarQube..."
-          done'
+          docker run -d --name sonarqube -p 9000:9000 sonarqube:9.9.1-community
+          timeout 300 bash -c 'while ! curl -sSf http://localhost:9000/api/system/status | grep -q "\"status\":\"UP\""; do sleep 10; done'
 
-      # Étape 3: Génération d'un token d'authentification
-      - name: 🔑 Générer un token SonarQube
-        run: |
-          SONAR_TOKEN=$(curl -sS -u admin:admin \
-            -X POST "http://localhost:9000/api/user_tokens/generate" \
-            -d "name=github-action-$(date +%s)" \
-            | jq -r '.token')
-          
-          echo "SONAR_TOKEN=${SONAR_TOKEN}" >> $GITHUB_ENV
-
-      # Étape 4: Installation des dépendances et tests
-      - name: 📦 Installer les dépendances
-        run: npm install
-
-      - name: 🧪 Exécuter les tests
-        run: npm test
-
-      # Étape 5: Analyse du code avec SonarQube
       - name: 🔍 Analyser avec SonarQube
         uses: SonarSource/sonarqube-scan-action@v4
         env:
-          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
           SONAR_HOST_URL: http://localhost:9000
-          SONAR_SCANNER_OPTS: "-Xmx1024m"
 
-      # Étape 6: Vérification de la Quality Gate
-      - name: 🚦 Vérifier Quality Gate
-        uses: SonarSource/sonarqube-quality-gate-action@v1
-        env:
-          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
-
-      # Nettoyage (toujours exécuté, même en cas d'échec)
-      - name: 🧹 Nettoyer
-        if: always()
-        run: docker rm -f sonarqube || true
-
-
-  #######################################################################
-  # PHASE 2 : Build, Push Docker et Déploiement sur K3s
-  #######################################################################
-  build-and-deploy:
-    name: Build et Déploiement
-    needs: sonarqube-analysis  # Dépend de l'analyse SonarQube
+  terraform-deploy:
+    name: Déploiement Terraform
+    needs: sonarqube-analysis
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    
     steps:
-      # Étape 1: Récupération du code
       - name: 🛎️ Checkout du code
         uses: actions/checkout@v4
 
-      # Étape 2: Authentification à Docker Hub
       - name: 🔐 Login Docker Hub
         run: echo "${{ secrets.DOCKER_TOKEN }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
 
-      # Étape 3: Build de l'image Docker (avec 2 tags: latest et commit SHA)
-      - name: 🏗️ Build Docker
+      - name: 🏗️ Build et Push Docker
         run: |
-          docker build \
-            -t ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:latest \
-            -t ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:${{ github.sha }} \
-            .
-
-      # Étape 4: Push des images sur Docker Hub
-      - name: 🚀 Push Docker
-        run: |
-          docker push ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:latest
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:${{ github.sha }} .
           docker push ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:${{ github.sha }}
 
-      # Étape 5: Installation de K3s (lightweight Kubernetes)
-      - name: 🖥️ Installer K3s
+      - name: 🖥️ Configurer K3s
         run: |
-          curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.26.5+k3s1 sh -
-          sudo chmod 644 /etc/rancher/k3s/k3s.yaml
-
-      # Étape 6: Configuration de kubectl
-      - name: ⚙️ Configurer kubectl
-        run: |
+          curl -sfL https://get.k3s.io | sh -
           mkdir -p $HOME/.kube
           sudo cp /etc/rancher/k3s/k3s.yaml $HOME/.kube/config
           sudo chown $(id -u):$(id -g) $HOME/.kube/config
-          sed -i 's/127.0.0.1/localhost/g' $HOME/.kube/config
 
-      # Étape 7: Déploiement sur K3s (Deployment + Service LoadBalancer)
-      - name: 🚀 Déployer sur K3s
+      - name: ⚙️ Installer Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: "1.5.5"
+
+      - name: 🚀 Déployer avec Terraform
+        working-directory: ./infra
+        env:
+          TF_VAR_docker_username: ${{ secrets.DOCKER_USERNAME }}
+          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+          TF_VAR_image_tag: ${{ github.sha }}
         run: |
-          kubectl apply -f k8s/deployment.yaml
-          kubectl apply -f k8s/service.yaml  # Service de type LoadBalancer
-          kubectl rollout status deployment/gestion-trajet --timeout=300s
+          terraform init
+          terraform validate
+          terraform apply -auto-approve
 
-      # Étape 8: Vérification du déploiement
       - name: 🔍 Vérifier le déploiement
         run: |
-          kubectl get all -n default
+          kubectl get all -n microservice
+          echo "Service URL: $(terraform -chdir=infra output -raw service_url)"
