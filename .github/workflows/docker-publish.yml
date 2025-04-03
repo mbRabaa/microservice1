@@ -12,7 +12,7 @@ jobs:
   install-and-test:
     name: Installation et Tests
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: 🛎️ Checkout du code
         uses: actions/checkout@v4
@@ -23,12 +23,15 @@ jobs:
       - name: 🧪 Exécuter les tests unitaires
         run: npm test
 
+      - name: 🔁 Tests d’intégration
+        run: npm run test:integration
+
   sonarqube-analysis:
     name: Analyse SonarQube
-    needs: install-and-test
     runs-on: ubuntu-latest
+    needs: install-and-test
     timeout-minutes: 30
-    
+
     steps:
       - name: 🛎️ Checkout du code
         uses: actions/checkout@v4
@@ -37,7 +40,11 @@ jobs:
 
       - name: 🐳 Démarrer SonarQube
         run: |
-          docker run -d --name sonarqube -p 9000:9000 -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true sonarqube:9.9.1-community
+          docker run -d \
+            --name sonarqube \
+            -p 9000:9000 \
+            -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true \
+            sonarqube:9.9.1-community
           timeout 300 bash -c 'while ! curl -sSf ${{ env.SONAR_HOST_URL }}/api/system/status | grep -q "\"status\":\"UP\""; do
             sleep 10
             echo "En attente du démarrage de SonarQube..."
@@ -46,7 +53,10 @@ jobs:
       - name: 🔑 Générer un token SonarQube
         id: sonar-token
         run: |
-          SONAR_TOKEN=$(curl -sS -u admin:admin -X POST "${{ env.SONAR_HOST_URL }}/api/user_tokens/generate" -d "name=github-action-$(date +%s)" | jq -r '.token')
+          SONAR_TOKEN=$(curl -sS -u admin:admin \
+            -X POST "${{ env.SONAR_HOST_URL }}/api/user_tokens/generate" \
+            -d "name=github-action-$(date +%s)" \
+            | jq -r '.token')
           echo "SONAR_TOKEN=$SONAR_TOKEN" >> $GITHUB_ENV
           echo "::add-mask::$SONAR_TOKEN"
 
@@ -61,37 +71,14 @@ jobs:
         if: always()
         run: docker rm -f sonarqube || true
 
-  integration-tests:
-    name: Tests d'intégration
-    needs: sonarqube-analysis
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: 🛎️ Checkout du code
-        uses: actions/checkout@v4
-
-      - name: 📦 Installer les dépendances
-        run: npm install
-
-      - name: 🏗️ Démarrer les services nécessaires (ex: base de données)
-        run: |
-          docker-compose up -d
-
-      - name: 🔬 Exécuter les tests d'intégration
-        run: npm run test:integration
-
-      - name: 🧹 Arrêter les services
-        if: always()
-        run: docker-compose down
-
   terraform-deploy:
     name: Déploiement Terraform
-    needs: integration-tests
     runs-on: ubuntu-latest
+    needs: sonarqube-analysis
     permissions:
       contents: read
       packages: write
-    
+
     steps:
       - name: 🛎️ Checkout du code
         uses: actions/checkout@v4
@@ -101,7 +88,10 @@ jobs:
 
       - name: 🏗️ Build Docker
         run: |
-          docker build -t ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:${{ github.sha }} -t ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:latest .
+          docker build \
+            -t ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:${{ github.sha }} \
+            -t ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:latest \
+            .
 
       - name: 🚀 Push Docker
         run: |
