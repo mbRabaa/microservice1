@@ -1,138 +1,130 @@
-name: CI/CD Complète - Analyse, Déploiement, Tests
+name: CI/CD - Pipeline DevOps avec Terraform
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
 
 env:
-  # Configuration globale
   SONAR_HOST_URL: http://localhost:9000
-  K3S_VERSION: v1.26.5+k3s1
-  TERRAFORM_VERSION: 1.5.5
-  NAMESPACE: microservice
 
 jobs:
-  #############################################
-  ### JOB 1 : VÉRIFICATION ET TESTS UNITAIRE
-  #############################################
-  verification:
-    name: "1. ✅ Vérification du Code"
+  install-and-test:
+    name: Installation et Tests
     runs-on: ubuntu-latest
     
     steps:
-      # Étape 1.1 - Récupération du code source
-      - name: "1.1 🛎️ Checkout du code"
+      - name: 🛎️ Checkout du code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Nécessaire pour l'analyse SonarQube
 
-      # Étape 1.2 - Installation des dépendances
-      - name: "1.2 📦 Installer les dépendances"
+      - name: 📦 Installer les dépendances
         run: npm install
 
-      # Étape 1.3 - Exécution des tests unitaires
-      - name: "1.3 🧪 Exécuter les tests"
+      - name: 🧪 Exécuter les tests unitaires
         run: npm test
 
-  #############################################
-  ### JOB 2 : ANALYSE QUALITÉ AVEC SONARQUBE
-  #############################################
-  quality-analysis:
-    name: "2. 🔍 Analyse Qualité"
-    needs: verification  # Dépend des tests unitaires
+  sonarqube-analysis:
+    name: Analyse SonarQube
+    needs: install-and-test
     runs-on: ubuntu-latest
     timeout-minutes: 30
     
     steps:
-      # Étape 2.1 - Démarrage de SonarQube
-      - name: "2.1 🐳 Démarrer SonarQube"
+      - name: 🛎️ Checkout du code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🐳 Démarrer SonarQube
         run: |
-          docker run -d \
-            --name sonarqube \
-            -p 9000:9000 \
-            -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true \
-            sonarqube:9.9.1-community
+          docker run -d --name sonarqube -p 9000:9000 -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true sonarqube:9.9.1-community
           timeout 300 bash -c 'while ! curl -sSf ${{ env.SONAR_HOST_URL }}/api/system/status | grep -q "\"status\":\"UP\""; do
             sleep 10
-            echo "En attente du démarrage..."
+            echo "En attente du démarrage de SonarQube..."
           done'
 
-      # Étape 2.2 - Génération du token
-      - name: "2.2 🔑 Générer token SonarQube"
+      - name: 🔑 Générer un token SonarQube
+        id: sonar-token
         run: |
-          SONAR_TOKEN=$(curl -sS -u admin:admin \
-            -X POST "${{ env.SONAR_HOST_URL }}/api/user_tokens/generate" \
-            -d "name=github-action-$(date +%s)" \
-            | jq -r '.token')
+          SONAR_TOKEN=$(curl -sS -u admin:admin -X POST "${{ env.SONAR_HOST_URL }}/api/user_tokens/generate" -d "name=github-action-$(date +%s)" | jq -r '.token')
           echo "SONAR_TOKEN=$SONAR_TOKEN" >> $GITHUB_ENV
           echo "::add-mask::$SONAR_TOKEN"
 
-      # Étape 2.3 - Analyse du code
-      - name: "2.3 🔍 Exécuter analyse SonarQube"
+      - name: 🔍 Analyser avec SonarQube
         uses: SonarSource/sonarqube-scan-action@v4
         env:
           SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
+          SONAR_SCANNER_OPTS: "-Xmx1024m"
 
-      # Étape 2.4 - Nettoyage
-      - name: "2.4 🧹 Nettoyer"
+      - name: 🧹 Nettoyer
         if: always()
         run: docker rm -f sonarqube || true
 
-  #############################################
-  ### JOB 3 : DÉPLOIEMENT TERRAFORM
-  #############################################
+  integration-tests:
+    name: Tests d'intégration
+    needs: sonarqube-analysis
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 🛎️ Checkout du code
+        uses: actions/checkout@v4
+
+      - name: 📦 Installer les dépendances
+        run: npm install
+
+      - name: 🏗️ Démarrer les services nécessaires (ex: base de données)
+        run: |
+          docker-compose up -d
+
+      - name: 🔬 Exécuter les tests d'intégration
+        run: npm run test:integration
+
+      - name: 🧹 Arrêter les services
+        if: always()
+        run: docker-compose down
+
   terraform-deploy:
-    name: "3. 🚀 Déploiement Terraform"
-    needs: quality-analysis  # Dépend de l'analyse qualité
+    name: Déploiement Terraform
+    needs: integration-tests
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     
     steps:
-      # Étape 3.1 - Authentification Docker
-      - name: "3.1 🔐 Login Docker Hub"
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_TOKEN }}
+      - name: 🛎️ Checkout du code
+        uses: actions/checkout@v4
 
-      # Étape 3.2 - Build de l'image Docker
-      - name: "3.2 🏗️ Build Docker"
+      - name: 🔐 Login Docker Hub
+        run: echo "${{ secrets.DOCKER_TOKEN }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+
+      - name: 🏗️ Build Docker
         run: |
-          docker build \
-            -t ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:${{ github.sha }} \
-            -t ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:latest \
-            .
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:${{ github.sha }} -t ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:latest .
 
-      # Étape 3.3 - Push de l'image
-      - name: "3.3 🚀 Push Docker"
+      - name: 🚀 Push Docker
         run: |
           docker push ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:${{ github.sha }}
           docker push ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:latest
 
-      # Étape 3.4 - Installation de K3s
-      - name: "3.4 🖥️ Installer K3s"
+      - name: 🖥️ Installer K3s
         run: |
-          curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=${{ env.K3S_VERSION }} sh -
+          curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.26.5+k3s1 sh -
           sudo chmod 644 /etc/rancher/k3s/k3s.yaml
 
-      # Étape 3.5 - Configuration de kubectl
-      - name: "3.5 ⚙️ Configurer kubectl"
+      - name: ⚙️ Configurer kubectl
         run: |
           mkdir -p $HOME/.kube
           sudo cp /etc/rancher/k3s/k3s.yaml $HOME/.kube/config
           sudo chown $(id -u):$(id -g) $HOME/.kube/config
 
-      # Étape 3.6 - Installation de Terraform
-      - name: "3.6 ⚙️ Installer Terraform"
+      - name: ⚙️ Installer Terraform
         uses: hashicorp/setup-terraform@v2
         with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_version: "1.5.5"
 
-      # Étape 3.7 - Déploiement Terraform
-      - name: "3.7 🌐 Déployer infrastructure"
+      - name: 🚀 Déployer avec Terraform
         working-directory: ./infra
         env:
           TF_VAR_docker_username: ${{ secrets.DOCKER_USERNAME }}
@@ -143,43 +135,7 @@ jobs:
           terraform validate
           terraform apply -auto-approve
 
-      # Étape 3.8 - Récupération de l'URL
-      - name: "3.8 📌 Récupérer URL service"
-        id: get-service-url
-        working-directory: ./infra
+      - name: 🔍 Vérifier le déploiement
         run: |
-          echo "service_url=$(terraform output -raw service_url)" >> $GITHUB_OUTPUT
-
-  #############################################
-  ### JOB 4 : TESTS D'INTÉGRATION
-  #############################################
-  integration-tests:
-    name: "4. 🔗 Tests d'Intégration"
-    needs: terraform-deploy  # Nécessite l'URL du service
-    runs-on: ubuntu-latest
-    
-    steps:
-      # Étape 4.1 - Installation des dépendances
-      - name: "4.1 📦 Installer dépendances"
-        run: npm install
-
-      # Étape 4.2 - Test de santé
-      - name: "4.2 🩺 Tester santé API"
-        env:
-          SERVICE_URL: ${{ needs.terraform-deploy.outputs.service_url }}
-        run: |
-          echo "Test du endpoint /health sur $SERVICE_URL"
-          curl -sSf "$SERVICE_URL/health" || exit 1
-
-      # Étape 4.3 - Tests fonctionnels
-      - name: "4.3 🧪 Exécuter tests complets"
-        run: npm run test:integration
-
-      # Étape 4.4 - Archivage des résultats
-      - name: "4.4 📦 Sauvegarder résultats"
-        uses: actions/upload-artifact@v4
-        with:
-          name: integration-test-results
-          path: |
-            coverage/
-            test-results.xml
+          kubectl get all -n microservice
+          echo "Service URL: $(terraform -chdir=infra output -raw service_url)"
