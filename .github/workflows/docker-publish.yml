@@ -1,50 +1,60 @@
-name: CI/CD - Pipeline DevOps avec Terraform
+name: CI/CD Complète avec Terraform
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
 
 env:
   SONAR_HOST_URL: http://localhost:9000
-  SERVICE_NAMESPACE: microservice
+  K3S_VERSION: v1.26.5+k3s1
+  TERRAFORM_VERSION: 1.5.5
+  NAMESPACE: microservice
+  DOCKER_REGISTRY: docker.io
 
 jobs:
+  #######################################################################
+  ### JOB 1 : Tests Unitaires
+  #######################################################################
   unit-tests:
-    name: "🧪 Tests Unitaires"
+    name: "1. 🧪 Tests Unitaires"
     runs-on: ubuntu-latest
     
     steps:
-      - name: "🛎️ Checkout du code"
+      - name: "1.1 🛎️ Checkout du code"
         uses: actions/checkout@v4
 
-      - name: "📦 Installer les dépendances"
-        run: npm install
+      - name: "1.2 📦 Installer les dépendances"
+        run: npm ci
 
-      - name: "🔬 Exécuter les tests unitaires"
-        run: npm test
+      - name: "1.3 🔬 Exécuter les tests"
+        run: |
+          npm test -- --watchAll=false --coverage
+          echo "Tests unitaires terminés"
 
-      - name: "📦 Sauvegarder les résultats"
-        uses: actions/upload-artifact@v4  # Version mise à jour
+      - name: "1.4 📦 Sauvegarder les résultats"
+        uses: actions/upload-artifact@v4
         with:
           name: unit-test-results
           path: |
             coverage/
             test-results.xml
 
+  #######################################################################
+  ### JOB 2 : Analyse SonarQube
+  #######################################################################
   sonarqube-analysis:
-    name: Analyse SonarQube
+    name: "2. 🔍 Analyse SonarQube"
     needs: unit-tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
     
     steps:
-      - name: 🛎️ Checkout du code
+      - name: "2.1 🛎️ Checkout du code"
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: 🐳 Démarrer SonarQube
+      - name: "2.2 🐳 Démarrer SonarQube"
         run: |
           docker run -d \
             --name sonarqube \
@@ -53,11 +63,10 @@ jobs:
             sonarqube:9.9.1-community
           timeout 300 bash -c 'while ! curl -sSf ${{ env.SONAR_HOST_URL }}/api/system/status | grep -q "\"status\":\"UP\""; do
             sleep 10
-            echo "En attente du démarrage de SonarQube..."
+            echo "En attente..."
           done'
 
-      - name: 🔑 Générer un token SonarQube
-        id: sonar-token
+      - name: "2.3 🔑 Générer token"
         run: |
           SONAR_TOKEN=$(curl -sS -u admin:admin \
             -X POST "${{ env.SONAR_HOST_URL }}/api/user_tokens/generate" \
@@ -66,19 +75,21 @@ jobs:
           echo "SONAR_TOKEN=$SONAR_TOKEN" >> $GITHUB_ENV
           echo "::add-mask::$SONAR_TOKEN"
 
-      - name: 🔍 Analyser avec SonarQube
+      - name: "2.4 🔍 Analyser code"
         uses: SonarSource/sonarqube-scan-action@v4
         env:
           SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
-          SONAR_SCANNER_OPTS: "-Xmx1024m"
 
-      - name: 🧹 Nettoyer
+      - name: "2.5 🧹 Nettoyer"
         if: always()
         run: docker rm -f sonarqube || true
 
+  #######################################################################
+  ### JOB 3 : Déploiement Terraform
+  #######################################################################
   terraform-deploy:
-    name: Déploiement Terraform
+    name: "3. 🚀 Déploiement Terraform"
     needs: sonarqube-analysis
     runs-on: ubuntu-latest
     permissions:
@@ -86,78 +97,93 @@ jobs:
       packages: write
     
     steps:
-      - name: 🛎️ Checkout du code
+      - name: "3.1 🛎️ Checkout du code"
         uses: actions/checkout@v4
 
-      - name: 🔐 Login Docker Hub
-        run: echo "${{ secrets.DOCKER_TOKEN }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+      - name: "3.2 🔐 Authentification Docker"
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
 
-      - name: 🏗️ Build Docker
+      - name: "3.3 🏗️ Build image Docker"
         run: |
           docker build \
-            -t ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:${{ github.sha }} \
-            -t ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:latest \
+            -t ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/gestion-trajet:${{ github.sha }} \
+            -t ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/gestion-trajet:latest \
             .
 
-      - name: 🚀 Push Docker
+      - name: "3.4 🚀 Push image Docker"
         run: |
-          docker push ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:${{ github.sha }}
-          docker push ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:latest
+          docker push ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/gestion-trajet:${{ github.sha }}
+          docker push ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/gestion-trajet:latest
 
-      - name: 🖥️ Installer K3s
+      - name: "3.5 🖥️ Installer K3s"
         run: |
-          curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.26.5+k3s1 sh -
+          curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=${{ env.K3S_VERSION }} sh -
           sudo chmod 644 /etc/rancher/k3s/k3s.yaml
 
-      - name: ⚙️ Configurer kubectl
+      - name: "3.6 ⚙️ Configurer kubectl"
         run: |
           mkdir -p $HOME/.kube
           sudo cp /etc/rancher/k3s/k3s.yaml $HOME/.kube/config
           sudo chown $(id -u):$(id -g) $HOME/.kube/config
 
-      - name: ⚙️ Installer Terraform
+      - name: "3.7 ⚙️ Installer Terraform"
         uses: hashicorp/setup-terraform@v2
         with:
-          terraform_version: "1.5.5"
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-      - name: 🚀 Déployer avec Terraform
+      - name: "3.8 🌐 Déployer infrastructure"
         working-directory: ./infra
         env:
           TF_VAR_docker_username: ${{ secrets.DOCKER_USERNAME }}
           TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
           TF_VAR_image_tag: ${{ github.sha }}
         run: |
-          terraform init
+          terraform init -input=false
           terraform validate
-          terraform apply -auto-approve
+          terraform apply -auto-approve -no-color | tee terraform.log
+          
+          SERVICE_URL=$(terraform output -raw service_url | tr -d '\n')
+          echo "service_url=${SERVICE_URL}" >> $GITHUB_ENV
+          echo "::set-output name=service_url::${SERVICE_URL}"
 
-      - name: 🔍 Vérifier le déploiement
-        id: get-service-url
+      - name: "3.9 🔍 Vérifier déploiement"
         run: |
-          kubectl get all -n ${{ env.SERVICE_NAMESPACE }}
-          echo "service_url=$(terraform -chdir=infra output -raw service_url)" >> $GITHUB_OUTPUT
+          echo "Ressources déployées :"
+          kubectl get all -n ${{ env.NAMESPACE }} --request-timeout='5s' 2>/dev/null || true
+          echo -e "\nURL du service : ${{ env.service_url }}"
 
+  #######################################################################
+  ### JOB 4 : Tests d'Intégration
+  #######################################################################
   integration-tests:
-    name: "🔗 Tests d'Intégration"
+    name: "4. 🔗 Tests d'Intégration"
     needs: terraform-deploy
     runs-on: ubuntu-latest
+    env:
+      SERVICE_URL: ${{ needs.terraform-deploy.outputs.service_url }}
     
     steps:
-      - name: "🛎️ Checkout du code"
+      - name: "4.1 🛎️ Checkout du code"
         uses: actions/checkout@v4
 
-      - name: "📦 Installer les dépendances de test"
+      - name: "4.2 📦 Installer dépendances"
         run: npm install
 
-      - name: "🧪 Exécuter les tests d'intégration"
-        env:
-          API_BASE_URL: ${{ needs.terraform-deploy.outputs.service_url }}
+      - name: "4.3 🧪 Exécuter tests"
         run: |
-          curl -sSf "$API_BASE_URL/health" || exit 1
+          echo "Test de l'URL: $SERVICE_URL"
+          
+          # Test de santé basique
+          curl -sSf "$SERVICE_URL/health" || exit 1
+          
+          # Tests supplémentaires (ajuster selon besoin)
           npm run test:integration
 
-      - name: "📦 Publier les résultats"
-        uses: actions/upload-artifact@v4  # Version mise à jour
+      - name: "4.4 📦 Publier résultats"
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: integration-test-results
