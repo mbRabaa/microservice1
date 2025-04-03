@@ -1,290 +1,185 @@
-name: CI/CD Complète - React + Terraform + K3s
+name: CI/CD Complète - Analyse, Déploiement, Tests
+
 on:
   push:
-    branches: [ main ]
-  pull_request:
     branches: [ main ]
 
 env:
   # Configuration globale
-  SONAR_HOST_URL: http://localhost:9000  # URL locale pour SonarQube
-  K3S_VERSION: v1.26.5+k3s1             # Version spécifique de K3s
-  TERRAFORM_VERSION: 1.5.5              # Version de Terraform
-  NAMESPACE: microservice               # Namespace Kubernetes
-  DOCKER_REGISTRY: docker.io            # Registry Docker
+  SONAR_HOST_URL: http://localhost:9000
+  K3S_VERSION: v1.26.5+k3s1
+  TERRAFORM_VERSION: 1.5.5
+  NAMESPACE: microservice
 
 jobs:
-  ##############################################
-  ### JOB 1 - TESTS UNITAIRES AVEC VITEST ###
-  ##############################################
-  unit-tests:
-    name: "1. 🧪 Tests Unitaires (Vitest)"
+  #############################################
+  ### JOB 1 : VÉRIFICATION ET TESTS UNITAIRE
+  #############################################
+  verification:
+    name: "1. ✅ Vérification du Code"
     runs-on: ubuntu-latest
     
     steps:
-      # Étape 1.1 - Récupération du code
+      # Étape 1.1 - Récupération du code source
       - name: "1.1 🛎️ Checkout du code"
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Nécessaire pour certains outils d'analyse
+          fetch-depth: 0  # Nécessaire pour l'analyse SonarQube
 
       # Étape 1.2 - Installation des dépendances
       - name: "1.2 📦 Installer les dépendances"
-        run: |
-          npm ci  # Utilise package-lock.json pour une installation reproductible
-          echo "Dépendances installées avec succès"
+        run: npm install
 
-      # Étape 1.3 - Exécution des tests avec Vitest
-      - name: "1.3 🔬 Exécuter tests (Vitest)"
-        run: |
-          echo "Début des tests unitaires avec Vitest..."
-          npm test -- --coverage  # Exécute Vitest avec rapport de couverture
-          echo "Tests unitaires terminés"
+      # Étape 1.3 - Exécution des tests unitaires
+      - name: "1.3 🧪 Exécuter les tests"
+        run: npm test
 
-      # Étape 1.4 - Archivage des résultats
-      - name: "1.4 📦 Sauvegarder résultats"
-        uses: actions/upload-artifact@v4
-        with:
-          name: unit-test-results
-          path: |
-            coverage/          # Rapport de couverture
-            test-results.xml   # Résultats au format JUnit
-
-  ##############################################
-  ### JOB 2 - ANALYSE QUALITÉ AVEC SONARQUBE ###
-  ##############################################
-  sonarqube-analysis:
-    name: "2. 🔍 Analyse SonarQube"
-    needs: unit-tests  # Dépend des tests unitaires
+  #############################################
+  ### JOB 2 : ANALYSE QUALITÉ AVEC SONARQUBE
+  #############################################
+  quality-analysis:
+    name: "2. 🔍 Analyse Qualité"
+    needs: verification  # Dépend des tests unitaires
     runs-on: ubuntu-latest
-    timeout-minutes: 30  # Timeout pour éviter les blocages
+    timeout-minutes: 30
     
     steps:
-      # Étape 2.1 - Récupération du code
-      - name: "2.1 🛎️ Checkout du code"
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Nécessaire pour l'analyse Sonar
-
-      # Étape 2.2 - Démarrage du serveur SonarQube
-      - name: "2.2 🐳 Démarrer SonarQube"
+      # Étape 2.1 - Démarrage de SonarQube
+      - name: "2.1 🐳 Démarrer SonarQube"
         run: |
-          echo "Démarrage du conteneur SonarQube..."
           docker run -d \
             --name sonarqube \
             -p 9000:9000 \
             -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true \
-            --memory 2g \
-            --cpus 2 \
             sonarqube:9.9.1-community
-          
-          # Attente du démarrage (5 minutes max)
-          echo "Attente du démarrage de SonarQube..."
           timeout 300 bash -c 'while ! curl -sSf ${{ env.SONAR_HOST_URL }}/api/system/status | grep -q "\"status\":\"UP\""; do
             sleep 10
-            echo "En attente..."
+            echo "En attente du démarrage..."
           done'
-          echo "SonarQube est prêt!"
 
-      # Étape 2.3 - Génération du token d'accès
-      - name: "2.3 🔑 Générer token SonarQube"
-        id: sonar-token
+      # Étape 2.2 - Génération du token
+      - name: "2.2 🔑 Générer token SonarQube"
         run: |
-          echo "Génération du token SonarQube..."
           SONAR_TOKEN=$(curl -sS -u admin:admin \
             -X POST "${{ env.SONAR_HOST_URL }}/api/user_tokens/generate" \
             -d "name=github-action-$(date +%s)" \
             | jq -r '.token')
-          
-          # Sécurisation du token
           echo "SONAR_TOKEN=$SONAR_TOKEN" >> $GITHUB_ENV
           echo "::add-mask::$SONAR_TOKEN"
-          echo "Token généré et sécurisé"
 
-      # Étape 2.4 - Analyse du code
-      - name: "2.4 🔍 Exécuter analyse SonarQube"
+      # Étape 2.3 - Analyse du code
+      - name: "2.3 🔍 Exécuter analyse SonarQube"
         uses: SonarSource/sonarqube-scan-action@v4
         env:
           SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
-          SONAR_SCANNER_OPTS: "-Xmx1024m"
-        with:
-          args: >
-            -Dsonar.projectKey=my-project
-            -Dsonar.projectName=GestionTrajet
 
-      # Étape 2.5 - Nettoyage
-      - name: "2.5 🧹 Nettoyer SonarQube"
+      # Étape 2.4 - Nettoyage
+      - name: "2.4 🧹 Nettoyer"
         if: always()
-        run: |
-          echo "Nettoyage du conteneur SonarQube..."
-          docker rm -f sonarqube || echo "Nettoyage déjà effectué"
+        run: docker rm -f sonarqube || true
 
-  ##############################################
-  ### JOB 3 - BUILD ET DÉPLOIEMENT TERRAFORM ###
-  ##############################################
+  #############################################
+  ### JOB 3 : DÉPLOIEMENT TERRAFORM
+  #############################################
   terraform-deploy:
     name: "3. 🚀 Déploiement Terraform"
-    needs: sonarqube-analysis  # Dépend de l'analyse Sonar
+    needs: quality-analysis  # Dépend de l'analyse qualité
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     
     steps:
-      # Étape 3.1 - Récupération du code
-      - name: "3.1 🛎️ Checkout du code"
-        uses: actions/checkout@v4
-
-      # Étape 3.2 - Authentification Docker
-      - name: "3.2 🔐 Login Docker Hub"
-        uses: docker/login-action@v3
+      # Étape 3.1 - Authentification Docker
+      - name: "3.1 🔐 Login Docker Hub"
+        uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
-        env:
-          DOCKER_REGISTRY: ${{ env.DOCKER_REGISTRY }}
 
-      # Étape 3.3 - Construction de l'image Docker
-      - name: "3.3 🏗️ Build Docker"
+      # Étape 3.2 - Build de l'image Docker
+      - name: "3.2 🏗️ Build Docker"
         run: |
-          echo "Construction de l'image Docker..."
           docker build \
-            -t ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/gestion-trajet:${{ github.sha }} \
-            -t ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/gestion-trajet:latest \
+            -t ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:${{ github.sha }} \
+            -t ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:latest \
             .
-          echo "Build Docker terminé"
 
-      # Étape 3.4 - Envoi des images
-      - name: "3.4 🚀 Push Docker"
+      # Étape 3.3 - Push de l'image
+      - name: "3.3 🚀 Push Docker"
         run: |
-          echo "Envoi des images Docker..."
-          docker push ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/gestion-trajet:${{ github.sha }}
-          docker push ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/gestion-trajet:latest
-          echo "Push Docker terminé"
+          docker push ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:${{ github.sha }}
+          docker push ${{ secrets.DOCKER_USERNAME }}/gestion-trajet:latest
 
-      # Étape 3.5 - Installation de K3s
-      - name: "3.5 🖥️ Installer K3s"
+      # Étape 3.4 - Installation de K3s
+      - name: "3.4 🖥️ Installer K3s"
         run: |
-          echo "Installation de K3s (Kubernetes léger)..."
           curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=${{ env.K3S_VERSION }} sh -
           sudo chmod 644 /etc/rancher/k3s/k3s.yaml
-          echo "K3s installé avec succès"
 
-      # Étape 3.6 - Configuration de kubectl
-      - name: "3.6 ⚙️ Configurer kubectl"
+      # Étape 3.5 - Configuration de kubectl
+      - name: "3.5 ⚙️ Configurer kubectl"
         run: |
-          echo "Configuration de kubectl..."
           mkdir -p $HOME/.kube
           sudo cp /etc/rancher/k3s/k3s.yaml $HOME/.kube/config
           sudo chown $(id -u):$(id -g) $HOME/.kube/config
-          
-          # Vérification de la connexion
-          kubectl cluster-info
-          echo "kubectl configuré"
 
-      # Étape 3.7 - Installation de Terraform
-      - name: "3.7 ⚙️ Installer Terraform"
+      # Étape 3.6 - Installation de Terraform
+      - name: "3.6 ⚙️ Installer Terraform"
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
-          terraform_wrapper: false
 
-      # Étape 3.8 - Déploiement Terraform
-      - name: "3.8 🌐 Déployer avec Terraform"
+      # Étape 3.7 - Déploiement Terraform
+      - name: "3.7 🌐 Déployer infrastructure"
         working-directory: ./infra
         env:
           TF_VAR_docker_username: ${{ secrets.DOCKER_USERNAME }}
           TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
           TF_VAR_image_tag: ${{ github.sha }}
-          TF_VAR_namespace: ${{ env.NAMESPACE }}
         run: |
-          echo "Initialisation de Terraform..."
-          terraform init -input=false
-          
-          echo "Validation de la configuration..."
+          terraform init
           terraform validate
-          
-          echo "Planification du déploiement..."
-          terraform plan -out=tfplan
-          
-          echo "Application des changements..."
-          terraform apply -auto-approve tfplan
-          echo "Déploiement Terraform terminé"
+          terraform apply -auto-approve
 
-      # Étape 3.9 - Vérification du déploiement
-      - name: "3.9 🔍 Vérifier déploiement"
-        run: |
-          echo "Vérification des ressources déployées..."
-          kubectl get all -n ${{ env.NAMESPACE }} --request-timeout='5s' 2>/dev/null || true
-          
-          echo -e "\nURL du service déployé :"
-          terraform -chdir=infra output -raw service_url
-
-      # Étape 3.10 - Stockage de l'URL
-      - name: "3.10 📌 Stocker l'URL du service"
-        id: set-output
+      # Étape 3.8 - Récupération de l'URL
+      - name: "3.8 📌 Récupérer URL service"
+        id: get-service-url
         working-directory: ./infra
         run: |
-          echo "service_url=$(terraform output -raw service_url | tr -d '\n')" >> $GITHUB_OUTPUT
-          echo "URL du service stockée pour les tests d'intégration"
+          echo "service_url=$(terraform output -raw service_url)" >> $GITHUB_OUTPUT
 
-  ##############################################
-  ### JOB 4 - TESTS D'INTÉGRATION ###
-  ##############################################
+  #############################################
+  ### JOB 4 : TESTS D'INTÉGRATION
+  #############################################
   integration-tests:
     name: "4. 🔗 Tests d'Intégration"
-    needs: terraform-deploy  # Nécessite l'URL du service déployé
+    needs: terraform-deploy  # Nécessite l'URL du service
     runs-on: ubuntu-latest
     
     steps:
-      # Étape 4.1 - Récupération du code
-      - name: "4.1 🛎️ Checkout du code"
-        uses: actions/checkout@v4
+      # Étape 4.1 - Installation des dépendances
+      - name: "4.1 📦 Installer dépendances"
+        run: npm install
 
-      # Étape 4.2 - Installation des dépendances
-      - name: "4.2 📦 Installer dépendances"
-        run: |
-          echo "Installation des dépendances de test..."
-          npm install
-          npm install -g newman  # Pour les tests API
-
-      # Étape 4.3 - Exécution des tests
-      - name: "4.3 🧪 Exécuter tests"
+      # Étape 4.2 - Test de santé
+      - name: "4.2 🩺 Tester santé API"
         env:
-          API_BASE_URL: ${{ needs.terraform-deploy.outputs.service_url }}
+          SERVICE_URL: ${{ needs.terraform-deploy.outputs.service_url }}
         run: |
-          echo "Début des tests d'intégration sur $API_BASE_URL"
-          
-          # Test basique de santé
-          echo "Test de santé..."
-          curl -sSf "$API_BASE_URL/health" || exit 1
-          
-          # Exemple avec Newman (tests API)
-          echo "Exécution des tests API..."
-          newman run tests/integration/api-tests.json \
-            --env-var "base_url=$API_BASE_URL" \
-            --reporters cli,junit \
-            --reporter-junit-export test-results/integration.xml
-          
-          echo "Tests d'intégration terminés avec succès"
+          echo "Test du endpoint /health sur $SERVICE_URL"
+          curl -sSf "$SERVICE_URL/health" || exit 1
+
+      # Étape 4.3 - Tests fonctionnels
+      - name: "4.3 🧪 Exécuter tests complets"
+        run: npm run test:integration
 
       # Étape 4.4 - Archivage des résultats
-      - name: "4.4 📦 Publier résultats"
+      - name: "4.4 📦 Sauvegarder résultats"
         uses: actions/upload-artifact@v4
-        if: always()
         with:
           name: integration-test-results
           path: |
-            test-results/
             coverage/
-
-      # Étape 4.5 - Notification visuelle
-      - name: "4.5 ✅ Afficher résultat"
-        if: always()
-        run: |
-          if [ "${{ job.status }}" == "success" ]; then
-            echo "::notice::Tous les tests ont réussi!"
-          else
-            echo "::error::Certains tests ont échoué"
-          fi
+            test-results.xml
