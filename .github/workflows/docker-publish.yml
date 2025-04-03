@@ -7,10 +7,42 @@ on:
 
 env:
   SONAR_HOST_URL: http://localhost:9000
+  SERVICE_NAMESPACE: microservice
 
 jobs:
+  #######################################################################
+  # PHASE 1 : Tests Unitaires
+  #######################################################################
+  unit-tests:
+    name: "🧪 Tests Unitaires"
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: "🛎️ Checkout du code"
+        uses: actions/checkout@v4
+
+      - name: "📦 Installer les dépendances"
+        run: npm install
+
+      - name: "🔬 Exécuter les tests unitaires"
+        run: |
+          npm test
+          echo "Tests unitaires terminés"
+
+      - name: "📦 Sauvegarder les résultats"
+        uses: actions/upload-artifact@v3
+        with:
+          name: unit-test-results
+          path: |
+            coverage/
+            test-results.xml
+
+  #######################################################################
+  # PHASE 2 : Analyse SonarQube (existante)
+  #######################################################################
   sonarqube-analysis:
     name: Analyse SonarQube
+    needs: unit-tests  # Ajout de la dépendance aux tests unitaires
     runs-on: ubuntu-latest
     timeout-minutes: 30
     
@@ -40,7 +72,7 @@ jobs:
             -d "name=github-action-$(date +%s)" \
             | jq -r '.token')
           echo "SONAR_TOKEN=$SONAR_TOKEN" >> $GITHUB_ENV
-          echo "::add-mask::$SONAR_TOKEN"  # Masque le token dans les logs
+          echo "::add-mask::$SONAR_TOKEN"
 
       - name: 🔍 Analyser avec SonarQube
         uses: SonarSource/sonarqube-scan-action@v4
@@ -53,6 +85,9 @@ jobs:
         if: always()
         run: docker rm -f sonarqube || true
 
+  #######################################################################
+  # PHASE 3 : Déploiement Terraform (existante)
+  #######################################################################
   terraform-deploy:
     name: Déploiement Terraform
     needs: sonarqube-analysis
@@ -108,6 +143,41 @@ jobs:
           terraform apply -auto-approve
 
       - name: 🔍 Vérifier le déploiement
+        id: get-service-url
         run: |
-          kubectl get all -n microservice
-          echo "Service URL: $(terraform -chdir=infra output -raw service_url)"
+          kubectl get all -n ${{ env.SERVICE_NAMESPACE }}
+          echo "service_url=$(terraform -chdir=infra output -raw service_url)" >> $GITHUB_OUTPUT
+
+  #######################################################################
+  # PHASE 4 : Tests d'Intégration (nouvelle)
+  #######################################################################
+  integration-tests:
+    name: "🔗 Tests d'Intégration"
+    needs: terraform-deploy
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: "🛎️ Checkout du code"
+        uses: actions/checkout@v4
+
+      - name: "📦 Installer les dépendances de test"
+        run: npm install
+
+      - name: "🧪 Exécuter les tests d'intégration"
+        env:
+          API_BASE_URL: ${{ needs.terraform-deploy.outputs.service_url }}
+        run: |
+          # Test basique de santé
+          curl -sSf "$API_BASE_URL/health" || exit 1
+          
+          # Exemple avec des tests supplémentaires
+          npm run test:integration
+
+      - name: "📦 Publier les résultats"
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: integration-test-results
+          path: |
+            test-results/
+            coverage/
