@@ -7,7 +7,7 @@ on:
 env:
   # Configuration globale
   SONAR_HOST_URL: http://localhost:9000
-  SONAR_PROJECT_KEY: gestion-trajet-app  # Doit être unique
+  SONAR_PROJECT_KEY: gestion-trajet-app
   K3S_VERSION: v1.26.5+k3s1
   TERRAFORM_VERSION: 1.5.5
   NAMESPACE: microservice
@@ -85,7 +85,7 @@ jobs:
         run: docker rm -f sonarqube || true
 
   #############################################
-  ### JOB 3 : TESTS D'INTÉGRATION (CORRIGÉ)
+  ### JOB 3 : TESTS D'INTÉGRATION (OPTIMISÉ)
   #############################################
   integration-tests:
     name: "3. 🔗 Tests d'Intégration"
@@ -93,27 +93,56 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
+      # Étape 3.1 - Récupération du code source
       - name: "3.1 🛎️ Checkout du code"
         uses: actions/checkout@v4
 
-      - name: "3.2 🐳 Configurer Docker + Compose"
+      # Étape 3.2 - Configuration de l'environnement Docker
+      - name: "3.2 🐳 Configurer Docker"
         uses: docker/setup-buildx-action@v2
 
+      # Étape 3.3 - Installation des dépendances Node.js
       - name: "3.3 📦 Installer les dépendances"
         run: npm ci
 
-      - name: "3.4 🐳 Démarrer les services dépendants"
-        run: docker compose -f docker-compose.test.yml up -d  # Nouvelle syntaxe sans tiret
+      # Étape 3.4 - Démarrage de PostgreSQL pour les tests
+      - name: "3.4 🐳 Démarrer PostgreSQL"
+        run: |
+          # Lancement du conteneur PostgreSQL avec vérification de santé
+          docker run -d --name test-db \
+            -e POSTGRES_USER=testuser \
+            -e POSTGRES_PASSWORD=testpass \
+            -e POSTGRES_DB=testdb \
+            -p 5432:5432 \
+            --health-cmd "pg_isready -U testuser -d testdb" \
+            --health-interval 10s \
+            --health-timeout 5s \
+            --health-retries 5 \
+            postgres:13
 
+          # Attente active que PostgreSQL soit prêt (timeout après 2 minutes)
+          echo "⌛ Vérification de la disponibilité de PostgreSQL..."
+          timeout 120s bash -c 'until docker exec test-db pg_isready -U testuser -d testdb; do sleep 2; done'
+          echo "✅ PostgreSQL est opérationnel"
+
+      # Étape 3.5 - Exécution des tests d'intégration
       - name: "3.5 🧪 Exécuter les tests d'intégration"
         run: npm run test:integration
         env:
           DB_HOST: localhost
-          DB_PORT: 5432  # Exemple de variables d'environnement pour les tests
+          DB_PORT: 5432
+          DB_USER: testuser
+          DB_PASSWORD: testpass
+          DB_NAME: testdb
+          NODE_ENV: test
+        # Ces variables sont injectées dans l'application Node.js
 
-      - name: "3.6 🧹 Nettoyer les services"
+      # Étape 3.6 - Nettoyage des ressources (toujours exécutée)
+      - name: "3.6 🧹 Nettoyer les ressources"
         if: always()
-        run: docker compose -f docker-compose.test.yml down  # Nouvelle syntaxe sans tiret
+        run: |
+          docker rm -f test-db || true
+          echo "🧽 Nettoyage des conteneurs terminé"
 
   #############################################
   ### JOB 4 : DÉPLOIEMENT TERRAFORM
