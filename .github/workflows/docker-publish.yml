@@ -1,24 +1,18 @@
-name: CI/CD Complète
+name: CI/CD - Pipeline DevOps avec Terraform
 
 on:
   push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+    branches:
+      - main
 
 env:
   SONAR_HOST_URL: http://localhost:9000
-  SONAR_PROJECT_KEY: gestion-trajet-app
   K3S_VERSION: v1.26.5+k3s1
   TERRAFORM_VERSION: 1.5.5
   NAMESPACE: microservice
   DOCKER_REGISTRY: docker.io
   NODE_VERSION: 20
 
-permissions:
-  contents: read
-  packages: write
-  secrets: read  # Permission essentielle
 
 jobs:
   setup-and-test:
@@ -26,93 +20,135 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout du code
+      - name: "🛎️ Checkout du code"
         uses: actions/checkout@v4
 
-      - name: Configurer Node.js
+      - name: "⎔ Configurer Node.js"
         uses: actions/setup-node@v3
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
 
-      - name: Installer les dépendances
+      - name: "📦 Installer les dépendances"
         run: npm ci
 
-      - name: Exécuter les tests
-        run: npm test
+      - name: "🧪 Tests Unitaires"
+        run: npm run test:unit
+        env:
+          NODE_ENV: test
 
-      - name: Vérifier les fichiers
-        run: |
-          [ -f Dockerfile ] || { echo "❌ Dockerfile manquant"; exit 1; }
-          [ -f nginx.conf ] || { echo "❌ nginx.conf manquant"; exit 1; }
+      - name: "🔗 Tests d'Intégration"
+        run: npm run test:integration
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: testuser
+          DB_PASSWORD: testpass
+          NODE_ENV: test
 
-  quality-analysis:
-    name: "2. Analyse Qualité"
+      - name: "🛠️ Build de l'application"
+        run: npm run build
+
+  sonarqube-analysis:
+    name: "2. Analyse SonarQube"
     needs: setup-and-test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     
     steps:
-      - name: Checkout du code
+      - name: "🛎️ Checkout du code"
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Démarrer SonarQube
+      - name: "🐳 Démarrer SonarQube"
         run: |
           docker run -d \
             --name sonarqube \
             -p 9000:9000 \
             -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true \
             sonarqube:9.9.1-community
-          sleep 30  # Attente simplifiée
+          timeout 300 bash -c 'while ! curl -sSf ${{ env.SONAR_HOST_URL }}/api/system/status | grep -q "\"status\":\"UP\""; do
+            sleep 10
+            echo "En attente du démarrage..."
+          done'
 
-      - name: Exécuter analyse SonarQube
+      - name: "🔑 Générer token SonarQube"
+        run: |
+          SONAR_TOKEN=$(curl -sS -u admin:admin \
+            -X POST "${{ env.SONAR_HOST_URL }}/api/user_tokens/generate" \
+            -d "name=github-action-$(date +%s)" \
+            | jq -r '.token')
+          echo "SONAR_TOKEN=$SONAR_TOKEN" >> $GITHUB_ENV
+          echo "::add-mask::$SONAR_TOKEN"
+
+      - name: "🔍 Exécuter analyse SonarQube"
         uses: SonarSource/sonarqube-scan-action@v4
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
+        with:
+          args: >
+            -Dsonar.projectKey=gestion-trajet-app
+            -Dsonar.sources=src
+            -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
 
-  build-and-push:
-    name: "3. Construction Docker"
-    needs: quality-analysis
+      - name: "🧹 Nettoyer SonarQube"
+        if: always()
+        run: docker rm -f sonarqube || true
+
+  docker-deploy:
+    name: "3. Déploiement Docker et Kubernetes"
+    needs: sonarqube-analysis
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout du code
+      - name: "🛎️ Checkout du code"
         uses: actions/checkout@v4
 
-      - name: Connexion à Docker Hub
-        uses: docker/login-action@v2
+      - name: "🔐 Login Docker Hub"
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Construire et pousser
+      - name: "🏗️ Build Docker"
         uses: docker/build-push-action@v4
         with:
           context: .
           push: true
-          tags: ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/app:${{ github.sha }}
+          tags: |
+            ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/gestion-trajet:${{ github.sha }}
+            ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/gestion-trajet:latest
 
-  deploy:
-    name: "4. Déploiement"
-    needs: build-and-push
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Installer K3s
+      - name: "🖥️ Installer K3s"
         run: |
           curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=${{ env.K3S_VERSION }} sh -
+          sudo chmod 644 /etc/rancher/k3s/k3s.yaml
 
-      - name: Configurer kubectl
+      - name: "⚙️ Configurer kubectl"
         run: |
           mkdir -p $HOME/.kube
           sudo cp /etc/rancher/k3s/k3s.yaml $HOME/.kube/config
           sudo chown $(id -u):$(id -g) $HOME/.kube/config
 
-      - name: Déployer avec Terraform
+      - name: "⚙️ Installer Terraform"
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: "🚀 Déployer avec Terraform"
         working-directory: ./infra
         env:
           TF_VAR_docker_username: ${{ secrets.DOCKERHUB_USERNAME }}
+          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
           TF_VAR_image_tag: ${{ github.sha }}
         run: |
           terraform init
+          terraform validate
           terraform apply -auto-approve
+
+      - name: "🔍 Vérifier le déploiement"
+        run: |
+          kubectl get all -n ${{ env.NAMESPACE }}
+          echo "Service URL: $(terraform -chdir=infra output -raw service_url)"
