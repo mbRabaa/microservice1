@@ -16,6 +16,10 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
+    include: [
+      'tests/unit/**/*.{test,spec}.{ts,tsx}',    // Tests unitaires
+      'tests/integration/**/*.{test,spec}.{ts,tsx}' // Tests d'intégration
+    ],
     setupFiles: ['./tests/setup.ts'], // Assurez-vous que ce fichier existe
     exclude: [
       '**/actions-runner/**',

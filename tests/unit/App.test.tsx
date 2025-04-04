@@ -2,8 +2,8 @@ import React from 'react';
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
-import App from '../src/App';
-import { server } from './setup';
+import App from '../../src/App'
+import { server } from '../setup';
 
 beforeAll(() => {
   server.listen();
