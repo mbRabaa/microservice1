@@ -1,4 +1,4 @@
-name: CI/CD Complète - Vérification, Analyse, Tests, Déploiement
+name: CI/CD Complète - Vérification, Analyse, Tests d'integration, Déploiement
 
 on:
   push:
