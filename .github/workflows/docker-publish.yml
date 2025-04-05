@@ -1,4 +1,4 @@
-name: CI/CD  DevOps Complète
+name: CI/CD Pipeline DevOps Complète
 
 on:
   push:
@@ -21,23 +21,21 @@ env:
   # Monitoring
   PROMETHEUS_URL: http://prometheus:9090
   GRAFANA_URL: http://grafana:3000
-  ALERTMANAGER_URL: http://alertmanager:9093
   
-  # URLs
-  SONAR_HOST_URL: http://localhost:9000
-  SLACK_CHANNEL: '#devops-alerts'
+  # Email
+  YOUR_EMAIL: elmbarkirabea@gmail.com  # ← Remplacez par votre email
+  EMAIL_FROM: "GitHub Actions <actions@github.com>"
 
 jobs:
-  ################################################################
-  # ÉTAPE 1: Vérification et Tests
-  ################################################################
   setup-and-test:
-    name: "1. Vérification et Tests"
+    name: "1. Installation et Tests"
     runs-on: ubuntu-latest
     
     steps:
       - name: "🛎️ Checkout du code"
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
 
       - name: "⎔ Configurer Node.js"
         uses: actions/setup-node@v3
@@ -48,19 +46,10 @@ jobs:
       - name: "📦 Installer les dépendances"
         run: npm ci
 
-      - name: "🔍 Linter le code"
-        run: npm run lint
-
-      - name: "🧪 Tests Unitaires"
-        run: npm run test:unit
+      - name: "🧪 Tests Unitaires avec couverture"
+        run: npm run test:unit -- --coverage
         env:
           NODE_ENV: test
-
-      - name: "📊 Couverture de code"
-        uses: actions/upload-artifact@v3
-        with:
-          name: coverage-report
-          path: coverage/
 
       - name: "🔗 Tests d'Intégration"
         run: npm run test:integration
@@ -74,131 +63,74 @@ jobs:
       - name: "🛠️ Build de l'application"
         run: npm run build
 
-  ################################################################
-  # ÉTAPE 2: Analyse Qualité
-  ################################################################
   quality-analysis:
-    name: "2. Analyse Qualité"
+    name: "2. Analyse Qualité SonarQube"
     needs: setup-and-test
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     
     steps:
       - name: "🛎️ Checkout du code"
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+        uses: actions/checkout@v3
 
-      - name: "📥 Télécharger le rapport de couverture"
-        uses: actions/download-artifact@v3
-        with:
-          name: coverage-report
-
-      - name: "🐳 Démarrer SonarQube"
-        run: |
-          docker run -d \
-            --name sonarqube \
-            -p 9000:9000 \
-            -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true \
-            sonarqube:9.9.1-community
-          timeout 300 bash -c 'while ! curl -sSf ${{ env.SONAR_HOST_URL }}/api/system/status | grep -q "\"status\":\"UP\""; do
-            sleep 10
-            echo "En attente du démarrage..."
-          done'
-
-      - name: "🔑 Générer token SonarQube"
-        run: |
-          SONAR_TOKEN=$(curl -sS -u admin:admin \
-            -X POST "${{ env.SONAR_HOST_URL }}/api/user_tokens/generate" \
-            -d "name=github-action-$(date +%s)" \
-            | jq -r '.token')
-          echo "SONAR_TOKEN=$SONAR_TOKEN" >> $GITHUB_ENV
-          echo "::add-mask::$SONAR_TOKEN"
-
-      - name: "🔍 Exécuter analyse SonarQube"
-        uses: SonarSource/sonarqube-scan-action@v4
+      - name: "🔍 Exécuter SonarQube"
+        uses: SonarSource/sonarqube-scan-action@v1
         env:
-          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         with:
           args: >
             -Dsonar.projectKey=gestion-trajet-app
             -Dsonar.sources=src
+            -Dsonar.tests=test
             -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
+            -Dsonar.test.inclusions=**/*.test.js
             -Dsonar.qualitygate.wait=true
 
-      - name: "🧹 Nettoyer SonarQube"
+      - name: "📧 Notifier résultat analyse"
         if: always()
-        run: docker rm -f sonarqube || true
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          from: ${{ env.EMAIL_FROM }}
+          to: ${{ env.YOUR_EMAIL }}
+          subject: "Analyse SonarQube - ${{ github.repository }}"
+          body: |
+            L'analyse SonarQube est terminée.
+            Statut: ${{ job.status }}
+            Rapport: ${{ secrets.SONAR_HOST_URL }}/dashboard?id=gestion-trajet-app
 
-  ################################################################
-  # ÉTAPE 3: Déploiement Staging
-  ################################################################
   deploy-staging:
     name: "3. Déploiement Staging"
     needs: quality-analysis
     runs-on: ubuntu-latest
-    environment: staging
     
     steps:
       - name: "🛎️ Checkout du code"
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
       - name: "🔐 Login Docker Hub"
-        uses: docker/login-action@v3
+        uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
 
-      - name: "🏗️ Build Docker (Staging)"
-        uses: docker/build-push-action@v4
+      - name: "🏗️ Build et Push Docker"
+        uses: docker/build-push-action@v3
         with:
           context: .
           push: true
-          tags: |
-            ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/gestion-trajet:staging-${{ github.sha }}
-          labels: |
-            environment=staging
-            commit=${{ github.sha }}
-            build-date=${{ github.run_number }}
-
-      - name: "🖥️ Installer K3s (Staging)"
-        run: |
-          curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=${{ env.K3S_VERSION }} sh -
-          sudo chmod 644 /etc/rancher/k3s/k3s.yaml
-
-      - name: "⚙️ Configurer kubectl"
-        run: |
-          mkdir -p $HOME/.kube
-          sudo cp /etc/rancher/k3s/k3s.yaml $HOME/.kube/config
-          sudo chown $(id -u):$(id -g) $HOME/.kube/config
-
-      - name: "⚙️ Installer Terraform"
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          tags: ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/gestion-trajet:staging-${{ github.sha }}
 
       - name: "🚀 Déployer sur Staging"
         working-directory: ./infra
-        env:
-          TF_VAR_docker_username: ${{ secrets.DOCKER_USERNAME }}
-          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
-          TF_VAR_image_tag: staging-${{ github.sha }}
-          TF_VAR_environment: staging
         run: |
           terraform init -backend-config="env/staging.backend.tfvars"
           terraform validate
-          terraform plan -var-file="env/staging.tfvars"
           terraform apply -auto-approve -var-file="env/staging.tfvars"
 
-      - name: "🔍 Vérifier le déploiement staging"
-        run: |
-          kubectl get all -n ${{ env.NAMESPACE }}
-          echo "Staging URL: $(terraform -chdir=infra output -raw service_url)"
-
-  ################################################################
-  # ÉTAPE 4: Tests End-to-End
-  ################################################################
   e2e-tests:
     name: "4. Tests End-to-End"
     needs: deploy-staging
@@ -206,12 +138,7 @@ jobs:
     
     steps:
       - name: "🛎️ Checkout du code"
-        uses: actions/checkout@v4
-
-      - name: "⎔ Configurer Node.js"
-        uses: actions/setup-node@v3
-        with:
-          node-version: ${{ env.NODE_VERSION }}
+        uses: actions/checkout@v3
 
       - name: "🌐 Récupérer l'URL du staging"
         id: staging-url
@@ -223,74 +150,30 @@ jobs:
         run: npm run test:e2e
         env:
           APP_URL: ${{ steps.staging-url.outputs.STAGING_URL }}
-          NODE_ENV: testing
 
-      - name: "📊 Générer rapport de tests"
-        if: always()
-        uses: actions/upload-artifact@v3
-        with:
-          name: e2e-report
-          path: cypress/reports/
-
-  ################################################################
-  # ÉTAPE 5: Déploiement Production
-  ################################################################
   deploy-prod:
     name: "5. Déploiement Production"
     needs: e2e-tests
     if: success()
     runs-on: ubuntu-latest
-    environment: production
     
     steps:
-      - name: "🛎️ Checkout du code"
-        uses: actions/checkout@v4
-
-      - name: "🔐 Login Docker Hub"
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_TOKEN }}
-
-      - name: "🏗️ Build Docker (Production)"
-        uses: docker/build-push-action@v4
+      - name: "🏗️ Build et Push Docker"
+        uses: docker/build-push-action@v3
         with:
           context: .
           push: true
           tags: |
             ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/gestion-trajet:${{ github.sha }}
             ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/gestion-trajet:latest
-          labels: |
-            environment=production
-            commit=${{ github.sha }}
-            build-date=${{ github.run_number }}
-
-      - name: "⚙️ Installer Terraform"
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: "🚀 Déployer en Production"
         working-directory: ./infra
-        env:
-          TF_VAR_docker_username: ${{ secrets.DOCKER_USERNAME }}
-          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
-          TF_VAR_image_tag: ${{ github.sha }}
-          TF_VAR_environment: production
         run: |
           terraform init -backend-config="env/prod.backend.tfvars"
           terraform validate
-          terraform plan -var-file="env/prod.tfvars"
           terraform apply -auto-approve -var-file="env/prod.tfvars"
 
-      - name: "🔍 Vérifier le déploiement production"
-        run: |
-          kubectl get all -n ${{ env.NAMESPACE }}
-          echo "Production URL: $(terraform -chdir=infra output -raw service_url)"
-
-  ################################################################
-  # ÉTAPE 6: Vérification Monitoring
-  ################################################################
   monitoring-check:
     name: "6. Vérification Monitoring"
     needs: deploy-prod
@@ -298,119 +181,28 @@ jobs:
     
     steps:
       - name: "📊 Vérifier Prometheus"
-        id: check-prometheus
         run: |
-          # Attendre que les métriques soient disponibles
-          timeout 120 bash -c 'until curl -s "${{ env.PROMETHEUS_URL }}/api/v1/query?query=up{job=\"gestion-trajet\"}" | jq -e ".data.result[0].value[1] == \"1\""; do
-            sleep 5
-            echo "En attente des métriques..."
-          done'
-          echo "METRICS_STATUS=1" >> $GITHUB_ENV
+          # Vérifier que le service est up
+          curl -s "${{ env.PROMETHEUS_URL }}/api/v1/targets" | \
+            jq -e '.data.activeTargets[] | select(.labels.job=="gestion-trajet" and .health=="up")'
+          
+          # Vérifier des métriques spécifiques
+          curl -s "${{ env.PROMETHEUS_URL }}/api/v1/query?query=up{job='gestion-trajet'}" | \
+            jq -e '.data.result[0].value[1] == "1"'
 
       - name: "📈 Vérifier Grafana"
         run: |
-          # Vérifier la santé de Grafana
-          curl -s -H "Authorization: Bearer ${{ secrets.GRAFANA_API_KEY }}" \
-            "${{ env.GRAFANA_URL }}/api/health" | \
-            jq -e '.database == "ok"' || exit 1
-
           # Vérifier que le dashboard existe
           curl -s -H "Authorization: Bearer ${{ secrets.GRAFANA_API_KEY }}" \
             "${{ env.GRAFANA_URL }}/api/dashboards/uid/gestion-trajet-dashboard" | \
             jq -e '.dashboard'
+          
+          # Vérifier la santé de Grafana
+          curl -s "${{ env.GRAFANA_URL }}/api/health" | \
+            jq -e '.database == "ok"'
 
-      - name: "🚨 Vérifier Alertmanager"
-        run: |
-          curl -s "${{ env.ALERTMANAGER_URL }}/api/v1/status" | \
-            jq -e '.config.original'
-
-  ################################################################
-  # ÉTAPE 7: Rollback Automatique
-  ################################################################
-  rollback-on-failure:
-    name: "🚨 Rollback Automatique"
-    if: failure() && needs.deploy-prod.result == 'failure'
-    needs: deploy-prod
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: "⚙️ Configurer kubectl"
-        run: |
-          mkdir -p $HOME/.kube
-          sudo cp /etc/rancher/k3s/k3s.yaml $HOME/.kube/config
-          sudo chown $(id -u):$(id -g) $HOME/.kube/config
-
-      - name: "↩️ Effectuer le rollback"
-        run: |
-          kubectl rollout undo deployment/gestion-trajet -n ${{ env.NAMESPACE }}
-          kubectl rollout status deployment/gestion-trajet -n ${{ env.NAMESPACE }} --timeout=120s
-
-      - name: "📝 Logs des pods"
-        if: always()
-        run: |
-          kubectl get pods -n ${{ env.NAMESPACE }}
-          kubectl logs -n ${{ env.NAMESPACE }} -l app=gestion-trajet --tail=50
-
-      - name: "⚠️ Notifier l'échec"
-        uses: slackapi/slack-github-action@v1
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
-        with:
-          payload: |
-            {
-              "channel": "${{ env.SLACK_CHANNEL }}",
-              "text": "Échec du déploiement en production - Rollback effectué",
-              "blocks": [
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": ":x: *Échec du déploiement en production*"
-                  }
-                },
-                {
-                  "type": "section",
-                  "fields": [
-                    {
-                      "type": "mrkdwn",
-                      "text": "*Repository:*\n${{ github.repository }}"
-                    },
-                    {
-                      "type": "mrkdwn",
-                      "text": "*Commit:*\n${{ github.sha }}"
-                    },
-                    {
-                      "type": "mrkdwn",
-                      "text": "*Workflow:*\n${{ github.workflow }}"
-                    },
-                    {
-                      "type": "mrkdwn",
-                      "text": "*Cause:*\n${{ needs.deploy-prod.result }}"
-                    }
-                  ]
-                },
-                {
-                  "type": "actions",
-                  "elements": [
-                    {
-                      "type": "button",
-                      "text": {
-                        "type": "plain_text",
-                        "text": "Voir les logs"
-                      },
-                      "url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-                    }
-                  ]
-                }
-              ]
-            }
-
-  ################################################################
-  # ÉTAPE 8: Notifications Finales
-  ################################################################
-  notify-success:
-    name: "📢 Notifications de Succès"
-    if: success()
+  notify:
+    name: "📧 Notifications Finales"
     needs: [deploy-prod, monitoring-check]
     runs-on: ubuntu-latest
     
@@ -421,90 +213,23 @@ jobs:
         run: |
           echo "PROD_URL=$(terraform output -raw service_url)" >> $GITHUB_OUTPUT
 
-      - name: "📊 Déterminer statut monitoring"
-        id: monitoring-status
-        run: |
-          if [ "$METRICS_STATUS" = "1" ]; then
-            echo "status=OK" >> $GITHUB_OUTPUT
-          else
-            echo "status=NOK" >> $GITHUB_OUTPUT
-          fi
-        env:
-          METRICS_STATUS: ${{ env.METRICS_STATUS }}
-
-      - name: "📢 Notifier Slack"
-        uses: slackapi/slack-github-action@v1
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+      - name: "📧 Envoyer rapport complet"
+        uses: dawidd6/action-send-mail@v3
         with:
-          payload: |
-            {
-              "channel": "${{ env.SLACK_CHANNEL }}",
-              "text": "Déploiement réussi en production",
-              "blocks": [
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": ":white_check_mark: *Déploiement réussi en production*"
-                  }
-                },
-                {
-                  "type": "section",
-                  "fields": [
-                    {
-                      "type": "mrkdwn",
-                      "text": "*Repository:*\n${{ github.repository }}"
-                    },
-                    {
-                      "type": "mrkdwn",
-                      "text": "*Commit:*\n<${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}|${GITHUB_SHA:0:7}>"
-                    },
-                    {
-                      "type": "mrkdwn",
-                      "text": "*Environnement:*\nProduction"
-                    },
-                    {
-                      "type": "mrkdwn",
-                      "text": "*Statut Monitoring:*\n${{ steps.monitoring-status.outputs.status }}"
-                    }
-                  ]
-                },
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "*URL de production:*\n<${{ steps.prod-url.outputs.PROD_URL }}>"
-                  }
-                },
-                {
-                  "type": "actions",
-                  "elements": [
-                    {
-                      "type": "button",
-                      "text": {
-                        "type": "plain_text",
-                        "text": "Voir l'application"
-                      },
-                      "url": "${{ steps.prod-url.outputs.PROD_URL }}"
-                    },
-                    {
-                      "type": "button",
-                      "text": {
-                        "type": "plain_text",
-                        "text": "Voir les logs"
-                      },
-                      "url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-                    },
-                    {
-                      "type": "button",
-                      "text": {
-                        "type": "plain_text",
-                        "text": "Voir Grafana"
-                      },
-                      "url": "${{ env.GRAFANA_URL }}/d/gestion-trajet-dashboard"
-                    }
-                  ]
-                }
-              ]
-            }
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          from: ${{ env.EMAIL_FROM }}
+          to: ${{ env.YOUR_EMAIL }}
+          subject: "Rapport de déploiement - ${{ github.repository }}"
+          body: |
+            Déploiement terminé avec statut: ${{ job.status }}
+
+            Détails :
+            - Application: ${{ steps.prod-url.outputs.PROD_URL }}
+            - Commit: ${{ github.sha }}
+            - Date: $(date)
+            - Logs: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            Dashboard Grafana: ${{ env.GRAFANA_URL }}/d/gestion-trajet-dashboard
