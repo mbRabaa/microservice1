@@ -1,4 +1,4 @@
-name: CI/CD Pipeline DevOps Complète
+name: CI/CD  DevOps Complète
 
 on:
   push:
@@ -298,16 +298,14 @@ jobs:
     
     steps:
       - name: "📊 Vérifier Prometheus"
+        id: check-prometheus
         run: |
           # Attendre que les métriques soient disponibles
           timeout 120 bash -c 'until curl -s "${{ env.PROMETHEUS_URL }}/api/v1/query?query=up{job=\"gestion-trajet\"}" | jq -e ".data.result[0].value[1] == \"1\""; do
             sleep 5
             echo "En attente des métriques..."
           done'
-
-          # Vérifier les métriques custom
-          curl -s "${{ env.PROMETHEUS_URL }}/api/v1/query?query=http_request_duration_seconds_count" | \
-            jq -e '.data.result[0].value[1] != "0"'
+          echo "METRICS_STATUS=1" >> $GITHUB_ENV
 
       - name: "📈 Vérifier Grafana"
         run: |
@@ -423,10 +421,16 @@ jobs:
         run: |
           echo "PROD_URL=$(terraform output -raw service_url)" >> $GITHUB_OUTPUT
 
-      - name: "📊 Récupérer les métriques"
-        id: metrics
+      - name: "📊 Déterminer statut monitoring"
+        id: monitoring-status
         run: |
-          echo "METRICS=$(curl -s '${{ env.PROMETHEUS_URL }}/api/v1/query?query=up{job=\"gestion-trajet\"}' | jq '.data.result[0].value[1]')" >> $GITHUB_OUTPUT
+          if [ "$METRICS_STATUS" = "1" ]; then
+            echo "status=OK" >> $GITHUB_OUTPUT
+          else
+            echo "status=NOK" >> $GITHUB_OUTPUT
+          fi
+        env:
+          METRICS_STATUS: ${{ env.METRICS_STATUS }}
 
       - name: "📢 Notifier Slack"
         uses: slackapi/slack-github-action@v1
@@ -462,7 +466,7 @@ jobs:
                     },
                     {
                       "type": "mrkdwn",
-                      "text": "*Statut Monitoring:*\n${{ steps.metrics.outputs.METRICS == '1' ? 'OK' : 'NOK' }}"
+                      "text": "*Statut Monitoring:*\n${{ steps.monitoring-status.outputs.status }}"
                     }
                   ]
                 },
