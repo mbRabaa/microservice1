@@ -15,11 +15,10 @@ env:
   # Monitoring
   PROMETHEUS_URL: http://prometheus:9090
   GRAFANA_URL: http://grafana:3000
-  
+  GRAFANA_DASHBOARD_UID: gestion-trajet-dashboard
   # Email
-  YOUR_EMAIL: elmbarkirabea@gmail.com # ← Remplacez par votre email
+  YOUR_EMAIL: elmbarkirabea@gmail.com
   EMAIL_FROM: "GitHub Actions <actions@github.com>"
-
 
 jobs:
   setup-and-test:
@@ -157,65 +156,65 @@ jobs:
 
       - name: "🔍 Vérifier le déploiement"
         run: |
-          kubectl get all -n ${{ env.NAMESPACE }}
+          kubectl get pods,svc,deploy -n ${{ env.NAMESPACE }}  # Évite les erreurs metrics.k8s.io
           echo "Service URL: $(terraform -chdir=infra output -raw service_url)"
 
-          monitoring-check:
-            name: "6. Vérification Monitoring"
-            needs: deploy-prod
-            runs-on: ubuntu-latest
-            
-            steps:
-              - name: "📊 Vérifier Prometheus"
-                run: |
-                  # Vérifier que le service est up
-                  curl -s "${{ env.PROMETHEUS_URL }}/api/v1/targets" | \
-                    jq -e '.data.activeTargets[] | select(.labels.job=="gestion-trajet" and .health=="up")'
-                  
-                  # Vérifier des métriques spécifiques
-                  curl -s "${{ env.PROMETHEUS_URL }}/api/v1/query?query=up{job='gestion-trajet'}" | \
-                    jq -e '.data.result[0].value[1] == "1"'
-        
-              - name: "📈 Vérifier Grafana"
-                run: |
-                  # Vérifier que le dashboard existe
-                  curl -s -H "Authorization: Bearer ${{ secrets.GRAFANA_API_KEY }}" \
-                    "${{ env.GRAFANA_URL }}/api/dashboards/uid/gestion-trajet-dashboard" | \
-                    jq -e '.dashboard'
-                  
-                  # Vérifier la santé de Grafana
-                  curl -s "${{ env.GRAFANA_URL }}/api/health" | \
-                    jq -e '.database == "ok"'
-        
-          notify:
-            name: "📧 Notifications Finales"
-            needs: [deploy-prod, monitoring-check]
-            runs-on: ubuntu-latest
-            
-            steps:
-              - name: "🌐 Récupérer l'URL de production"
-                id: prod-url
-                working-directory: ./infra
-                run: |
-                  echo "PROD_URL=$(terraform output -raw service_url)" >> $GITHUB_OUTPUT
-        
-              - name: "📧 Envoyer rapport complet"
-                uses: dawidd6/action-send-mail@v3
-                with:
-                  server_address: smtp.gmail.com
-                  server_port: 465
-                  username: ${{ secrets.EMAIL_USERNAME }}
-                  password: ${{ secrets.EMAIL_PASSWORD }}
-                  from: ${{ env.EMAIL_FROM }}
-                  to: ${{ env.YOUR_EMAIL }}
-                  subject: "Rapport de déploiement - ${{ github.repository }}"
-                  body: |
-                    Déploiement terminé avec statut: ${{ job.status }}
-        
-                    Détails :
-                    - Application: ${{ steps.prod-url.outputs.PROD_URL }}
-                    - Commit: ${{ github.sha }}
-                    - Date: $(date)
-                    - Logs: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        
-                    Dashboard Grafana: ${{ env.GRAFANA_URL }}/d/gestion-trajet-dashboard
+  monitoring-check:
+    name: "4. Vérification Monitoring"
+    needs: docker-deploy
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: "📊 Vérifier Prometheus"
+        run: |
+          # Vérifier que le service est up
+          curl -s "${{ env.PROMETHEUS_URL }}/api/v1/targets" | \
+            jq -e '.data.activeTargets[] | select(.labels.job=="gestion-trajet" and .health=="up")'
+          
+          # Vérifier des métriques spécifiques
+          curl -s "${{ env.PROMETHEUS_URL }}/api/v1/query?query=up{job='gestion-trajet'}" | \
+            jq -e '.data.result[0].value[1] == "1"'
+
+      - name: "📈 Vérifier Grafana"
+        run: |
+          # Vérifier que le dashboard existe
+          curl -s -H "Authorization: Bearer ${{ secrets.GRAFANA_API_KEY }}" \
+            "${{ env.GRAFANA_URL }}/api/dashboards/uid/${{ env.GRAFANA_DASHBOARD_UID }}" | \
+            jq -e '.dashboard'
+          
+          # Vérifier la santé de Grafana
+          curl -s "${{ env.GRAFANA_URL }}/api/health" | \
+            jq -e '.database == "ok"'
+
+  notify:
+    name: "5. Notifications Finales"
+    needs: [docker-deploy, monitoring-check]
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: "🌐 Récupérer l'URL de production"
+        id: prod-url
+        working-directory: ./infra
+        run: |
+          echo "PROD_URL=$(terraform -chdir=infra output -raw service_url)" >> $GITHUB_OUTPUT
+
+      - name: "📧 Envoyer rapport complet"
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          from: ${{ env.EMAIL_FROM }}
+          to: ${{ env.YOUR_EMAIL }}
+          subject: "Rapport de déploiement - ${{ github.repository }}"
+          body: |
+            Déploiement terminé avec statut: ${{ job.status }}
+
+            Détails :
+            - Application: ${{ steps.prod-url.outputs.PROD_URL }}
+            - Commit: ${{ github.sha }}
+            - Date: $(date)
+            - Logs: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            Dashboard Grafana: ${{ env.GRAFANA_URL }}/d/${{ env.GRAFANA_DASHBOARD_UID }}
