@@ -1,4 +1,4 @@
-name: CI/CD - Pipeline DevOps complet
+name: CI/CD - Pipeline DevOps avec Terraform
 
 on:
   push:
@@ -6,28 +6,23 @@ on:
       - main
 
 env:
-  # Configurations de base
-  NODE_VERSION: 20
-  DOCKER_REGISTRY: docker.io
-  NAMESPACE: microservice
-  TERRAFORM_VERSION: 1.5.5
-  K3S_VERSION: v1.26.5+k3s1
-  
-  # Monitoring
-  PROMETHEUS_URL: http://prometheus-server:9090
-  GRAFANA_URL: http://grafana-service:3000
-  GRAFANA_DASHBOARD_UID: gestion-trajet-dashboard
-  
-  # SonarQube
   SONAR_HOST_URL: http://localhost:9000
-  
+  K3S_VERSION: v1.26.5+k3s1
+  TERRAFORM_VERSION: 1.5.5
+  NAMESPACE: microservice
+  DOCKER_REGISTRY: docker.io
+  NODE_VERSION: 20
+  # Monitoring - URLs modifiées pour Kubernetes
+  PROMETHEUS_URL: http://prometheus-server.monitoring.svc.cluster.local:9090
+  GRAFANA_URL: http://grafana-service.monitoring.svc.cluster.local:3000
+  GRAFANA_DASHBOARD_UID: gestion-trajet-dashboard
   # Email
   YOUR_EMAIL: elmbarkirabea@gmail.com
   EMAIL_FROM: "GitHub Actions <actions@github.com>"
 
 jobs:
   setup-and-test:
-    name: "1. Setup et Tests"
+    name: "1. Installation et Tests"
     runs-on: ubuntu-latest
     
     steps:
@@ -48,11 +43,6 @@ jobs:
         env:
           NODE_ENV: test
 
-      - name: "📊 Générer le rapport de couverture"
-        run: |
-          mkdir -p coverage
-          npm run coverage
-
       - name: "🔗 Tests d'Intégration"
         run: npm run test:integration
         env:
@@ -62,14 +52,18 @@ jobs:
           DB_PASSWORD: testpass
           NODE_ENV: test
 
+      - name: "🛠️ Build de l'application"
+        run: npm run build
+
   sonarqube-analysis:
-    name: "2. Analyse Qualité avec SonarQube"
+    name: "2. Analyse SonarQube"
     needs: setup-and-test
     runs-on: ubuntu-latest
     timeout-minutes: 30
     
     steps:
-      - uses: actions/checkout@v4.1.1
+      - name: "🛎️ Checkout du code"
+        uses: actions/checkout@v4.1.1
         with:
           fetch-depth: 0
 
@@ -104,20 +98,19 @@ jobs:
             -Dsonar.projectKey=gestion-trajet-app
             -Dsonar.sources=src
             -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
-            -Dsonar.tests=test
-            -Dsonar.test.inclusions=test/**/*.test.js
 
       - name: "🧹 Nettoyer SonarQube"
         if: always()
         run: docker rm -f sonarqube || true
 
   docker-deploy:
-    name: "3. Déploiement Docker/K8s"
+    name: "3. Déploiement Docker et Kubernetes"
     needs: sonarqube-analysis
     runs-on: ubuntu-latest
     
     steps:
-      - uses: actions/checkout@v4.1.1
+      - name: "🛎️ Checkout du code"
+        uses: actions/checkout@v4.1.1
 
       - name: "🔐 Login Docker Hub"
         uses: docker/login-action@v3
@@ -125,7 +118,7 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
 
-      - name: "🏗️ Build et Push Docker"
+      - name: "🏗️ Build Docker"
         uses: docker/build-push-action@v4
         with:
           context: .
@@ -134,28 +127,23 @@ jobs:
             ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/gestion-trajet:${{ github.sha }}
             ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/gestion-trajet:latest
 
-      - name: "🖥️ Installer et Configurer K3s"
+      - name: "🖥️ Installer K3s"
         run: |
-          # Installer K3s
           curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=${{ env.K3S_VERSION }} sh -
-          
-          # Configurer kubectl
+          sudo chmod 644 /etc/rancher/k3s/k3s.yaml
+
+      - name: "⚙️ Configurer kubectl"
+        run: |
           mkdir -p $HOME/.kube
           sudo cp /etc/rancher/k3s/k3s.yaml $HOME/.kube/config
           sudo chown $(id -u):$(id -g) $HOME/.kube/config
-          export KUBECONFIG=$HOME/.kube/config
-          echo "KUBECONFIG=$HOME/.kube/config" >> $GITHUB_ENV
-          
-          # Vérifier l'installation
-          kubectl cluster-info
-          kubectl get nodes
 
       - name: "⚙️ Installer Terraform"
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-      - name: "🚀 Déployer l'infrastructure"
+      - name: "🚀 Déployer avec Terraform"
         working-directory: ./infra
         env:
           TF_VAR_docker_username: ${{ secrets.DOCKER_USERNAME }}
@@ -166,6 +154,11 @@ jobs:
           terraform validate
           terraform apply -auto-approve
 
+      - name: "🔍 Vérifier le déploiement"
+        run: |
+          kubectl get pods,svc,deploy -n ${{ env.NAMESPACE }}
+          echo "Service URL: $(terraform -chdir=infra output -raw service_url)"
+
   monitoring-check:
     name: "4. Vérification Monitoring"
     needs: docker-deploy
@@ -173,50 +166,94 @@ jobs:
     timeout-minutes: 15
     
     steps:
-      - name: "🔍 Vérifier l'état du cluster"
+      - name: "🔎 Vérifier l'état des services"
         run: |
-          kubectl get pods -A
-          kubectl get svc -A
-
-      - name: "📊 Vérifier Prometheus"
-        run: |
-          # Setup port-forward
-          kubectl port-forward svc/prometheus-server 9090:9090 -n monitoring --address=0.0.0.0 &
-          sleep 5
+          echo "➡️ Liste des services dans le namespace monitoring:"
+          kubectl get svc -n monitoring || echo "::warning::Namespace monitoring non trouvé"
           
-          # Vérifier les targets
-          curl -s "http://localhost:9090/api/v1/targets" | \
-            jq -e '.data.activeTargets[] | select(.labels.job=="gestion-trajet")' || \
-            echo "::warning::Target 'gestion-trajet' non trouvée"
+          echo "➡️ Liste des services dans le namespace ${{ env.NAMESPACE }}:"
+          kubectl get svc -n ${{ env.NAMESPACE }} || {
+            echo "::error::Impossible de récupérer les services"
+            exit 1
+          }
+
+      - name: "📊 Vérifier Prometheus (avec gestion d'erreur)"
+        run: |
+          # 1. Vérifier que le service est accessible
+          if ! curl -s -f "${{ env.PROMETHEUS_URL }}/-/ready"; then
+            echo "::error::Prometheus inaccessible à ${{ env.PROMETHEUS_URL }}"
+            echo "Debug:"
+            kubectl get pods -n monitoring -l app=prometheus
+            kubectl logs -n monitoring -l app=prometheus --tail=50 || true
+            exit 1
+          fi
+
+          # 2. Vérifier les targets avec timeout
+          TARGETS=$(timeout 30 curl -s "${{ env.PROMETHEUS_URL }}/api/v1/targets" || {
+            echo "::error::Timeout lors de la connexion à Prometheus"
+            exit 1
+          })
+
+          if ! echo "$TARGETS" | jq -e '.data.activeTargets[] | select(.labels.job=="gestion-trajet" and .health=="up")' >/dev/null; then
+            echo "::error::Target 'gestion-trajet' non trouvée ou inactive"
+            echo "Targets disponibles:"
+            echo "$TARGETS" | jq '.data.activeTargets[].labels.job' || true
+            exit 1
+          fi
+
+          # 3. Vérification des métriques
+          METRICS=$(curl -s "${{ env.PROMETHEUS_URL }}/api/v1/query?query=up{job='gestion-trajet'}")
+          if ! echo "$METRICS" | jq -e '.data.result[0].value[1] == "1"' >/dev/null; then
+            echo "::warning::La métrique 'up' n'est pas à 1 pour le job 'gestion-trajet'"
+            echo "$METRICS" | jq . || true
+          fi
+
+          echo "✅ Prometheus vérifié avec succès"
 
       - name: "📈 Vérifier Grafana"
+        env:
+          GRAFANA_API_KEY: ${{ secrets.GRAFANA_API_KEY }}
         run: |
-          # Setup port-forward
-          kubectl port-forward svc/grafana 3000:3000 -n monitoring --address=0.0.0.0 &
-          sleep 5
-          
-          # Vérifier l'API health
-          curl -s "http://localhost:3000/api/health" | jq -e '.database == "ok"'
+          # 1. Vérification de base
+          if [ -z "$GRAFANA_API_KEY" ]; then
+            echo "::error::GRAFANA_API_KEY non configuré"
+            exit 1
+          fi
+
+          # 2. Vérifier l'accessibilité
+          if ! curl -s -f "${{ env.GRAFANA_URL }}/api/health"; then
+            echo "::error::Grafana inaccessible à ${{ env.GRAFANA_URL }}"
+            kubectl get pods -n monitoring -l app.kubernetes.io/name=grafana || true
+            exit 1
+          fi
+
+          # 3. Vérifier le dashboard
+          DASHBOARD=$(curl -s -H "Authorization: Bearer $GRAFANA_API_KEY" \
+            "${{ env.GRAFANA_URL }}/api/dashboards/uid/${{ env.GRAFANA_DASHBOARD_UID }}")
+
+          if ! echo "$DASHBOARD" | jq -e '.dashboard' >/dev/null; then
+            echo "::error::Dashboard ${{ env.GRAFANA_DASHBOARD_UID }} introuvable ou invalide"
+            echo "Réponse complète:"
+            echo "$DASHBOARD" | jq . || true
+            exit 1
+          fi
+
+          echo "✅ Grafana vérifié avec succès"
 
   notify:
-    name: "5. Notification Finale"
+    name: "5. Notifications Finales"
     needs: [docker-deploy, monitoring-check]
     runs-on: ubuntu-latest
     if: always()
     
     steps:
-      - name: "🌐 Récupérer l'URL du service"
-        id: get-url
+      - name: "🌐 Récupérer l'URL de production"
+        id: prod-url
         working-directory: ./infra
         run: |
-          if [ -f "output.tf" ]; then
-            echo "SERVICE_URL=$(terraform output -raw service_url)" >> $GITHUB_OUTPUT
-          else
-            echo "::warning::Fichier output.tf non trouvé"
-            echo "SERVICE_URL=non-disponible" >> $GITHUB_OUTPUT
-          fi
+          echo "PROD_URL=$(terraform -chdir=infra output -raw service_url)" >> $GITHUB_OUTPUT
 
-      - name: "📧 Envoyer rapport"
+      - name: "📧 Envoyer rapport complet"
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
@@ -225,14 +262,16 @@ jobs:
           password: ${{ secrets.EMAIL_PASSWORD }}
           from: ${{ env.EMAIL_FROM }}
           to: ${{ env.YOUR_EMAIL }}
-          subject: "Déploiement terminé - ${{ github.sha }}"
+          subject: "Rapport de déploiement - ${{ github.repository }}"
           body: |
-            Résultat: ${{ job.status }}
-            
-            Détails:
-            - Service: ${{ steps.get-url.outputs.SERVICE_URL }}
+            Statut: ${{ job.status }}
+
+            Détails :
+            - Application: ${{ steps.prod-url.outputs.PROD_URL }}
             - Commit: ${{ github.sha }}
             - Date: $(date)
-            
-            Logs complets:
-            https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            - Logs: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            Monitoring:
+            - Prometheus: ${{ env.PROMETHEUS_URL }}
+            - Grafana: ${{ env.GRAFANA_URL }}/d/${{ env.GRAFANA_DASHBOARD_UID }}
