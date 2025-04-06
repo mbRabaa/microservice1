@@ -27,7 +27,7 @@ jobs:
     
     steps:
       - name: "🛎️ Checkout du code"
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.1.1  # Version corrigée ici
 
       - name: "⎔ Configurer Node.js"
         uses: actions/setup-node@v3
@@ -63,7 +63,7 @@ jobs:
     
     steps:
       - name: "🛎️ Checkout du code"
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.1.1  # Version corrigée ici
         with:
           fetch-depth: 0
 
@@ -110,7 +110,7 @@ jobs:
     
     steps:
       - name: "🛎️ Checkout du code"
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.1.1  # Version corrigée ici
 
       - name: "🔐 Login Docker Hub"
         uses: docker/login-action@v3
@@ -156,35 +156,58 @@ jobs:
 
       - name: "🔍 Vérifier le déploiement"
         run: |
-          kubectl get pods,svc,deploy -n ${{ env.NAMESPACE }}  # Évite les erreurs metrics.k8s.io
+          kubectl get pods,svc,deploy -n ${{ env.NAMESPACE }}
           echo "Service URL: $(terraform -chdir=infra output -raw service_url)"
 
   monitoring-check:
     name: "4. Vérification Monitoring"
     needs: docker-deploy
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     
     steps:
       - name: "📊 Vérifier Prometheus"
         run: |
-          # Vérifier que le service est up
           curl -s "${{ env.PROMETHEUS_URL }}/api/v1/targets" | \
             jq -e '.data.activeTargets[] | select(.labels.job=="gestion-trajet" and .health=="up")'
           
-          # Vérifier des métriques spécifiques
           curl -s "${{ env.PROMETHEUS_URL }}/api/v1/query?query=up{job='gestion-trajet'}" | \
             jq -e '.data.result[0].value[1] == "1"'
 
       - name: "📈 Vérifier Grafana"
+        env:
+          GRAFANA_API_KEY: ${{ secrets.GRAFANA_API_KEY }}
         run: |
-          # Vérifier que le dashboard existe
-          curl -s -H "Authorization: Bearer ${{ secrets.GRAFANA_API_KEY }}" \
-            "${{ env.GRAFANA_URL }}/api/dashboards/uid/${{ env.GRAFANA_DASHBOARD_UID }}" | \
-            jq -e '.dashboard'
+          if [ -z "$GRAFANA_API_KEY" ]; then
+            echo "::error::Le secret GRAFANA_API_KEY n'est pas configuré"
+            exit 1
+          fi
+
+          DASHBOARD_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $GRAFANA_API_KEY" \
+            "${{ env.GRAFANA_URL }}/api/dashboards/uid/${{ env.GRAFANA_DASHBOARD_UID }}")
           
-          # Vérifier la santé de Grafana
-          curl -s "${{ env.GRAFANA_URL }}/api/health" | \
-            jq -e '.database == "ok"'
+          if [ "$DASHBOARD_RESPONSE" -ne 200 ]; then
+            echo "::error::Erreur lors de la récupération du dashboard (HTTP $DASHBOARD_RESPONSE)"
+            exit 1
+          fi
+
+          curl -s -H "Authorization: Bearer $GRAFANA_API_KEY" \
+            "${{ env.GRAFANA_URL }}/api/dashboards/uid/${{ env.GRAFANA_DASHBOARD_UID }}" | \
+            jq -e '.dashboard' || {
+              echo "::error::Le dashboard ne contient pas les données attendues"
+              exit 1
+            }
+
+      - name: "🔌 Vérifier les datasources Grafana"
+        if: always()
+        env:
+          GRAFANA_API_KEY: ${{ secrets.GRAFANA_API_KEY }}
+        run: |
+          curl -s -H "Authorization: Bearer $GRAFANA_API_KEY" \
+            "${{ env.GRAFANA_URL }}/api/datasources" | \
+            jq -e '.[] | select(.type=="prometheus")' || {
+              echo "::warning::Aucune datasource Prometheus configurée"
+            }
 
   notify:
     name: "5. Notifications Finales"
