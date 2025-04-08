@@ -185,36 +185,36 @@ jobs:
           docker-compose up -d
           
           # Attendre le démarrage complet
-          echo "Attente du démarrage des services (30s)..."
-          sleep 30
+          echo "Attente du démarrage des services (45s)..."
+          sleep 45
           
           # Vérifier l'état des conteneurs
           echo "État des conteneurs:"
           docker-compose ps -a
           
-          # Vérifier les logs en cas d'erreur
-          if ! docker-compose ps | grep -q "Up"; then
-            echo "Erreur de démarrage - Affichage des logs:"
-            docker-compose logs
+          # Vérification robuste de Prometheus
+          if ! docker logs monitoring_prometheus --tail=50 2>&1 | grep -q "Server is ready to receive web requests"; then
+            echo "❌ Prometheus ne s'est pas démarré correctement"
+            echo "Logs Prometheus:"
+            docker logs monitoring_prometheus
             exit 1
           fi
 
       - name: "📊 Vérifier Prometheus"
         run: |
-          # Vérification via le port exposé
-          echo "Vérification de Prometheus..."
-          timeout 120 bash -c 'until curl -s http://localhost:9090/-/ready | grep -q "Prometheus is Ready"; do
-            sleep 5
-            echo "En attente..."
-          done'
+          echo "Vérification de l'API Prometheus..."
+          if ! curl -s http://localhost:9090/-/ready | grep -q "Prometheus is Ready"; then
+            echo "❌ API Prometheus inaccessible"
+            docker logs monitoring_prometheus --tail=50
+            exit 1
+          fi
           
-          echo "Prometheus est prêt"
+          echo "Prometheus est opérationnel"
           echo "Targets:"
           curl -s http://localhost:9090/api/v1/targets | jq .
 
       - name: "📈 Configurer Grafana"
         run: |
-          # Configuration via le port exposé
           echo "Vérification de Grafana..."
           timeout 120 bash -c 'until curl -s http://localhost:3000/api/health | grep -q "\"database\":\"ok\""; do
             sleep 5
@@ -231,17 +231,21 @@ jobs:
               "url":"http://prometheus:9090",
               "access":"proxy",
               "basicAuth":false
-            }' || echo "La source existe peut-être déjà"
+            }' || {
+              echo "❌ Échec de configuration Grafana"
+              docker logs monitoring_grafana --tail=50
+              exit 1
+            }
 
       - name: "📝 Générer rapport"
         run: |
           echo "# Rapport de Monitoring" > monitoring/report.md
-          echo "## État des services" >> monitoring/report.md
-          docker-compose -f monitoring/docker-compose.yml ps >> monitoring/report.md
-          
+          echo "## Logs Prometheus" >> monitoring/report.md
+          docker logs monitoring_prometheus --tail=100 >> monitoring/report.md
+          echo "## Logs Grafana" >> monitoring/report.md
+          docker logs monitoring_grafana --tail=100 >> monitoring/report.md
           echo "## Métriques disponibles" >> monitoring/report.md
           curl -s http://localhost:9090/api/v1/label/__name__/values | jq . >> monitoring/report.md
-          
           echo "## Configuration Grafana" >> monitoring/report.md
           curl -s --user "admin:${{ env.GRAFANA_ADMIN_PASSWORD }}" http://localhost:3000/api/datasources | jq . >> monitoring/report.md
 
