@@ -182,34 +182,43 @@ jobs:
         working-directory: ./monitoring
         run: |
           docker-compose up -d
-          sleep 20  # Délai plus long pour le démarrage complet
+          sleep 30  # Délai plus long pour le démarrage complet
           docker-compose ps
 
-      - name: "📊 Vérifier Prometheus (via conteneur)"
+      - name: "📊 Vérifier Prometheus"
         run: |
-          # Utilisation de docker exec avec /bin/sh pour éviter les problèmes de curl
+          # Vérification via le port exposé
           echo "Vérification de l'état de Prometheus..."
-          docker exec monitoring_prometheus /bin/sh -c 'wget -qO- http://localhost:9090/-/ready' || echo "Prometheus pas encore prêt"
-          
-          echo "Attente du démarrage de Prometheus..."
-          timeout 120 bash -c 'until docker exec monitoring_prometheus /bin/sh -c "wget -qO- http://localhost:9090/-/ready" | grep -q "Prometheus is Ready"; do
-            sleep 5
-            echo "En attente..."
-          done'
-          
-          echo "Récupération des targets..."
-          docker exec monitoring_prometheus /bin/sh -c 'wget -qO- http://localhost:9090/api/v1/targets' | jq .
+          if curl -s http://localhost:9090/-/ready | grep -q "Prometheus is Ready"; then
+            echo "Prometheus est prêt"
+            echo "Targets Prometheus:"
+            curl -s http://localhost:9090/api/v1/targets | jq .
+          else
+            echo "Prometheus n'est pas encore prêt"
+            docker-compose logs prometheus
+            exit 1
+          fi
 
-      - name: "📈 Configurer Grafana (via conteneur)"
+      - name: "📈 Configurer Grafana"
         run: |
-          echo "Attente du démarrage de Grafana..."
-          timeout 120 bash -c 'until docker exec monitoring_grafana /bin/sh -c "wget -qO- http://localhost:3000/api/health" | grep -q "\"database\":\"ok\""; do
-            sleep 5
-            echo "En attente..."
-          done'
-          
-          echo "Configuration de la source de données..."
-          docker exec monitoring_grafana /bin/sh -c 'wget -qO- --header="Content-Type: application/json" --user=admin:${{ env.GRAFANA_ADMIN_PASSWORD }} --post-data="{\"name\":\"Prometheus\",\"type\":\"prometheus\",\"url\":\"http://prometheus:9090\",\"access\":\"proxy\"}" http://localhost:3000/api/datasources'
+          # Configuration via le port exposé
+          echo "Configuration de Grafana..."
+          if curl -s http://localhost:3000/api/health | grep -q "\"database\":\"ok\""; then
+            curl -X POST "http://localhost:3000/api/datasources" \
+              -H "Content-Type: application/json" \
+              -u "admin:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
+              -d '{
+                "name":"Prometheus",
+                "type":"prometheus",
+                "url":"http://prometheus:9090",
+                "access":"proxy",
+                "basicAuth":false
+              }' || echo "La source existe peut-être déjà"
+          else
+            echo "Grafana n'est pas encore prêt"
+            docker-compose logs grafana
+            exit 1
+          fi
 
       - name: "📝 Générer rapport"
         run: |
@@ -218,10 +227,10 @@ jobs:
           docker-compose -f monitoring/docker-compose.yml ps >> monitoring/report.md
           
           echo "## Métriques disponibles" >> monitoring/report.md
-          docker exec monitoring_prometheus /bin/sh -c 'wget -qO- http://localhost:9090/api/v1/label/__name__/values' | jq . >> monitoring/report.md
+          curl -s http://localhost:9090/api/v1/label/__name__/values | jq . >> monitoring/report.md
           
           echo "## Configuration Grafana" >> monitoring/report.md
-          docker exec monitoring_grafana /bin/sh -c 'wget -qO- --user=admin:${{ env.GRAFANA_ADMIN_PASSWORD }} http://localhost:3000/api/datasources' | jq . >> monitoring/report.md
+          curl -s --user "admin:${{ env.GRAFANA_ADMIN_PASSWORD }}" http://localhost:3000/api/datasources | jq . >> monitoring/report.md
 
   notify:
     name: "5. Notifications Finales"
