@@ -166,7 +166,7 @@ jobs:
     name: "4. Déploiement et Vérification Monitoring"
     needs: docker-deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     
     steps:
       - name: "🛎️ Checkout du code"
@@ -181,44 +181,57 @@ jobs:
       - name: "📦 Déployer la stack monitoring"
         working-directory: ./monitoring
         run: |
+          # Démarrer les services avec des noms fixes
           docker-compose up -d
-          sleep 30  # Délai plus long pour le démarrage complet
-          docker-compose ps
+          
+          # Attendre le démarrage complet
+          echo "Attente du démarrage des services (30s)..."
+          sleep 30
+          
+          # Vérifier l'état des conteneurs
+          echo "État des conteneurs:"
+          docker-compose ps -a
+          
+          # Vérifier les logs en cas d'erreur
+          if ! docker-compose ps | grep -q "Up"; then
+            echo "Erreur de démarrage - Affichage des logs:"
+            docker-compose logs
+            exit 1
+          fi
 
       - name: "📊 Vérifier Prometheus"
         run: |
           # Vérification via le port exposé
-          echo "Vérification de l'état de Prometheus..."
-          if curl -s http://localhost:9090/-/ready | grep -q "Prometheus is Ready"; then
-            echo "Prometheus est prêt"
-            echo "Targets Prometheus:"
-            curl -s http://localhost:9090/api/v1/targets | jq .
-          else
-            echo "Prometheus n'est pas encore prêt"
-            docker-compose logs prometheus
-            exit 1
-          fi
+          echo "Vérification de Prometheus..."
+          timeout 120 bash -c 'until curl -s http://localhost:9090/-/ready | grep -q "Prometheus is Ready"; do
+            sleep 5
+            echo "En attente..."
+          done'
+          
+          echo "Prometheus est prêt"
+          echo "Targets:"
+          curl -s http://localhost:9090/api/v1/targets | jq .
 
       - name: "📈 Configurer Grafana"
         run: |
           # Configuration via le port exposé
-          echo "Configuration de Grafana..."
-          if curl -s http://localhost:3000/api/health | grep -q "\"database\":\"ok\""; then
-            curl -X POST "http://localhost:3000/api/datasources" \
-              -H "Content-Type: application/json" \
-              -u "admin:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
-              -d '{
-                "name":"Prometheus",
-                "type":"prometheus",
-                "url":"http://prometheus:9090",
-                "access":"proxy",
-                "basicAuth":false
-              }' || echo "La source existe peut-être déjà"
-          else
-            echo "Grafana n'est pas encore prêt"
-            docker-compose logs grafana
-            exit 1
-          fi
+          echo "Vérification de Grafana..."
+          timeout 120 bash -c 'until curl -s http://localhost:3000/api/health | grep -q "\"database\":\"ok\""; do
+            sleep 5
+            echo "En attente..."
+          done'
+          
+          echo "Configuration de la source de données..."
+          curl -X POST "http://localhost:3000/api/datasources" \
+            -H "Content-Type: application/json" \
+            -u "admin:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
+            -d '{
+              "name":"Prometheus",
+              "type":"prometheus",
+              "url":"http://prometheus:9090",
+              "access":"proxy",
+              "basicAuth":false
+            }' || echo "La source existe peut-être déjà"
 
       - name: "📝 Générer rapport"
         run: |
