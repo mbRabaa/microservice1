@@ -1,64 +1,49 @@
 name: CI/CD - Pipeline DevOps avec Terraform
 
-# Déclenche le pipeline lors d'un push sur la branche main
 on:
   push:
     branches:
       - main
 
-# Variables d'environnement globales
 env:
-  # Configuration SonarQube
+  # Variables d'environnement globales
   SONAR_HOST_URL: http://localhost:9000
-  
-  # Versions des outils
   K3S_VERSION: v1.26.5+k3s1
   TERRAFORM_VERSION: 1.5.5
-  NODE_VERSION: 20
-  
-  # Configuration Kubernetes
   NAMESPACE: microservice
   DOCKER_REGISTRY: docker.io
-  
-  # Configuration Monitoring
+  NODE_VERSION: 20
+  # Configuration monitoring
   PROMETHEUS_SERVICE: prometheus-server
   GRAFANA_SERVICE: grafana-service
   GRAFANA_DASHBOARD_UID: gestion-trajet-dashboard
-  GRAFANA_ADMIN_PASSWORD: rabaa123
-  
-  # Configuration Email
+  # Configuration email
   YOUR_EMAIL: elmbarkirabea@gmail.com
   EMAIL_FROM: "GitHub Actions <actions@github.com>"
 
 jobs:
-  # Job 1: Installation et tests de l'application
   setup-and-test:
     name: "1. Installation et Tests"
     runs-on: ubuntu-latest
     
     steps:
-      # Étape 1: Récupération du code source
       - name: "🛎️ Checkout du code"
         uses: actions/checkout@v4.1.1
 
-      # Étape 2: Configuration de Node.js
       - name: "⎔ Configurer Node.js"
         uses: actions/setup-node@v3
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
 
-      # Étape 3: Installation des dépendances
       - name: "📦 Installer les dépendances"
         run: npm ci
 
-      # Étape 4: Exécution des tests unitaires
       - name: "🧪 Tests Unitaires"
         run: npm run test:unit
         env:
           NODE_ENV: test
 
-      # Étape 5: Exécution des tests d'intégration
       - name: "🔗 Tests d'Intégration"
         run: npm run test:integration
         env:
@@ -68,11 +53,9 @@ jobs:
           DB_PASSWORD: testpass
           NODE_ENV: test
 
-      # Étape 6: Build de l'application
       - name: "🛠️ Build de l'application"
         run: npm run build
 
-  # Job 2: Analyse de code avec SonarQube
   sonarqube-analysis:
     name: "2. Analyse SonarQube"
     needs: setup-and-test
@@ -85,7 +68,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Démarrage du conteneur SonarQube
       - name: "🐳 Démarrer SonarQube"
         run: |
           docker run -d \
@@ -93,14 +75,11 @@ jobs:
             -p 9000:9000 \
             -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true \
             sonarqube:9.9.1-community
-          
-          # Attente que le service soit opérationnel
-          timeout 300 bash -c 'while ! curl -sSf "${{ env.SONAR_HOST_URL }}/api/system/status | grep -q "\"status\":\"UP\""; do
+          timeout 300 bash -c 'while ! curl -sSf ${{ env.SONAR_HOST_URL }}/api/system/status | grep -q "\"status\":\"UP\""; do
             sleep 10
             echo "En attente du démarrage..."
           done'
 
-      # Génération du token d'accès
       - name: "🔑 Générer token SonarQube"
         run: |
           SONAR_TOKEN=$(curl -sS -u admin:admin \
@@ -110,7 +89,6 @@ jobs:
           echo "SONAR_TOKEN=$SONAR_TOKEN" >> $GITHUB_ENV
           echo "::add-mask::$SONAR_TOKEN"
 
-      # Exécution de l'analyse
       - name: "🔍 Exécuter analyse SonarQube"
         uses: SonarSource/sonarqube-scan-action@v4
         env:
@@ -122,12 +100,10 @@ jobs:
             -Dsonar.sources=src
             -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
 
-      # Nettoyage
       - name: "🧹 Nettoyer SonarQube"
         if: always()
         run: docker rm -f sonarqube || true
 
-  # Job 3: Déploiement Docker et Kubernetes
   docker-deploy:
     name: "3. Déploiement Docker et Kubernetes"
     needs: sonarqube-analysis
@@ -137,14 +113,12 @@ jobs:
       - name: "🛎️ Checkout du code"
         uses: actions/checkout@v4.1.1
 
-      # Authentification Docker Hub
       - name: "🔐 Login Docker Hub"
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
 
-      # Construction de l'image Docker
       - name: "🏗️ Build Docker"
         uses: docker/build-push-action@v4
         with:
@@ -154,26 +128,22 @@ jobs:
             ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/gestion-trajet:${{ github.sha }}
             ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/gestion-trajet:latest
 
-      # Installation de K3s (Kubernetes léger)
       - name: "🖥️ Installer K3s"
         run: |
           curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=${{ env.K3S_VERSION }} sh -
           sudo chmod 644 /etc/rancher/k3s/k3s.yaml
 
-      # Configuration de kubectl
       - name: "⚙️ Configurer kubectl"
         run: |
           mkdir -p $HOME/.kube
           sudo cp /etc/rancher/k3s/k3s.yaml $HOME/.kube/config
           sudo chown $(id -u):$(id -g) $HOME/.kube/config
 
-      # Installation de Terraform
       - name: "⚙️ Installer Terraform"
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-      # Déploiement avec Terraform
       - name: "🚀 Déployer avec Terraform"
         working-directory: ./infra
         env:
@@ -185,13 +155,11 @@ jobs:
           terraform validate
           terraform apply -auto-approve
 
-      # Vérification du déploiement
       - name: "🔍 Vérifier le déploiement"
         run: |
           kubectl get pods,svc,deploy -n ${{ env.NAMESPACE }}
           echo "Service URL: $(terraform -chdir=infra output -raw service_url)"
 
-  # Job 4: Déploiement et vérification du monitoring
   monitoring-deploy:
     name: "4. Déploiement et Vérification Monitoring"
     needs: docker-deploy
@@ -202,88 +170,59 @@ jobs:
       - name: "🛎️ Checkout du code"
         uses: actions/checkout@v4.1.1
 
-      # Installation de Docker Compose
       - name: "📦 Installer Docker Compose"
         run: |
           sudo curl -L "https://github.com/docker/compose/releases/download/v2.23.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
           sudo chmod +x /usr/local/bin/docker-compose
           docker-compose --version
 
-      # Déploiement de la stack monitoring
       - name: "📦 Déployer la stack monitoring"
         working-directory: ./monitoring
         run: |
-          # Démarrer les services
           docker-compose up -d
-          
-          # Court délai pour le démarrage
-          sleep 15
-          
-          # Vérification de l'état
+          sleep 10  # Attente courte pour le démarrage
           docker-compose ps
 
-      # Vérification de Prometheus
+      - name: "🔍 Vérifier la connectivité réseau"
+        run: |
+          # Vérifier que les conteneurs communiquent entre eux
+          docker exec monitoring_prometheus curl -s http://nginx-exporter:9113/metrics || echo "Échec de connexion à nginx-exporter"
+          docker exec monitoring_grafana curl -s http://prometheus:9090/-/healthy || echo "Échec de connexion à Prometheus"
+
       - name: "📊 Vérifier Prometheus"
         run: |
-          # Récupération de l'IP du conteneur
-          PROM_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' monitoring_prometheus)
-          echo "Prometheus IP: $PROM_IP"
-          
-          # Attente que le service soit prêt
-          timeout 60 bash -c 'until curl -sSf "http://$PROM_IP:9090/-/ready"; do
+          # Utilisation du nom du service Docker Compose
+          timeout 60 bash -c 'until docker exec monitoring_prometheus curl -sSf http://localhost:9090/-/ready; do
             sleep 5
             echo "En attente de Prometheus..."
           done'
-          
-          # Vérification des targets
-          echo "=== Targets Prometheus ==="
-          curl -s "http://$PROM_IP:9090/api/v1/targets" | jq .
 
-      # Configuration de Grafana
+          # Vérifier les targets depuis l'intérieur du conteneur
+          docker exec monitoring_prometheus curl -s http://localhost:9090/api/v1/targets | jq .
+
       - name: "📈 Configurer Grafana"
         run: |
-          # Récupération de l'IP du conteneur
-          GRAFANA_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' monitoring_grafana)
-          echo "Grafana IP: $GRAFANA_IP"
-          
-          # Attente que le service soit prêt
-          timeout 60 bash -c 'until curl -sSf "http://$GRAFANA_IP:3000/api/health"; do
-            sleep 5
-            echo "En attente de Grafana..."
-          done'
-          
-          # Configuration de la source de données
-          echo "=== Configuration de la source de données ==="
-          curl -X POST "http://$GRAFANA_IP:3000/api/datasources" \
+          # Configuration depuis l'intérieur du conteneur
+          docker exec monitoring_grafana curl -X POST "http://localhost:3000/api/datasources" \
             -H "Content-Type: application/json" \
-            -u "admin:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
+            -u "admin:rabaa123" \
             -d '{
               "name":"Prometheus",
               "type":"prometheus",
               "url":"http://prometheus:9090",
               "access":"proxy",
               "basicAuth":false
-            }' || echo "La source existe peut-être déjà"
+            }' || echo "La source de données existe peut-être déjà"
 
-      # Génération du rapport
       - name: "📝 Générer rapport de monitoring"
         run: |
-          # Création du rapport
           echo "# Rapport de Monitoring" > monitoring/report.md
-          
-          # État des services
           echo "## État des services" >> monitoring/report.md
           docker-compose -f monitoring/docker-compose.yml ps >> monitoring/report.md
           
-          # Métriques disponibles
-          PROM_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' monitoring_prometheus)
           echo "## Métriques disponibles" >> monitoring/report.md
-          curl -s "http://$PROM_IP:9090/api/v1/label/__name__/values" | jq . >> monitoring/report.md
-          
-          # Affichage du rapport
-          cat monitoring/report.md
+          docker exec monitoring_prometheus curl -s http://localhost:9090/api/v1/label/__name__/values | jq . >> monitoring/report.md
 
-  # Job 5: Notifications
   notify:
     name: "5. Notifications Finales"
     needs: [docker-deploy, monitoring-deploy]
@@ -291,14 +230,12 @@ jobs:
     if: always()
     
     steps:
-      # Récupération de l'URL de production
       - name: "🌐 Récupérer l'URL de production"
         id: prod-url
         working-directory: ./infra
         run: |
           echo "PROD_URL=$(terraform -chdir=infra output -raw service_url)" >> $GITHUB_OUTPUT
 
-      # Envoi du rapport par email
       - name: "📧 Envoyer rapport complet"
         uses: dawidd6/action-send-mail@v3
         with:
