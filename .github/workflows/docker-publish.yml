@@ -6,15 +6,20 @@ on:
       - main
 
 env:
+  # Configuration de base
   SONAR_HOST_URL: http://localhost:9000
   K3S_VERSION: v1.26.5+k3s1
   TERRAFORM_VERSION: 1.5.5
   NAMESPACE: microservice
   DOCKER_REGISTRY: docker.io
   NODE_VERSION: 20
+  
+  # Configuration Monitoring
   PROMETHEUS_PORT: 9090
   GRAFANA_PORT: 3000
   GRAFANA_ADMIN_PASSWORD: rabaa123
+  
+  # Configuration Email
   YOUR_EMAIL: elmbarkirabea@gmail.com
   EMAIL_FROM: "GitHub Actions <actions@github.com>"
 
@@ -177,40 +182,46 @@ jobs:
         working-directory: ./monitoring
         run: |
           docker-compose up -d
-          sleep 15
+          sleep 20  # Délai plus long pour le démarrage complet
           docker-compose ps
 
-      - name: "📊 Vérifier Prometheus"
+      - name: "📊 Vérifier Prometheus (via conteneur)"
         run: |
-          PROM_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' monitoring_prometheus)
-          timeout 60 bash -c 'until curl -sSf "http://$PROM_IP:9090/-/ready"; do
+          # Utilisation de docker exec avec /bin/sh pour éviter les problèmes de curl
+          echo "Vérification de l'état de Prometheus..."
+          docker exec monitoring_prometheus /bin/sh -c 'wget -qO- http://localhost:9090/-/ready' || echo "Prometheus pas encore prêt"
+          
+          echo "Attente du démarrage de Prometheus..."
+          timeout 120 bash -c 'until docker exec monitoring_prometheus /bin/sh -c "wget -qO- http://localhost:9090/-/ready" | grep -q "Prometheus is Ready"; do
             sleep 5
-            echo "En attente de Prometheus..."
+            echo "En attente..."
           done'
-          curl -s "http://$PROM_IP:9090/api/v1/targets" | jq .
+          
+          echo "Récupération des targets..."
+          docker exec monitoring_prometheus /bin/sh -c 'wget -qO- http://localhost:9090/api/v1/targets' | jq .
 
-      - name: "📈 Configurer Grafana"
+      - name: "📈 Configurer Grafana (via conteneur)"
         run: |
-          GRAFANA_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' monitoring_grafana)
-          curl -X POST "http://$GRAFANA_IP:3000/api/datasources" \
-            -H "Content-Type: application/json" \
-            -u "admin:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
-            -d '{
-              "name":"Prometheus",
-              "type":"prometheus",
-              "url":"http://prometheus:9090",
-              "access":"proxy",
-              "basicAuth":false
-            }' || echo "La source existe peut-être déjà"
+          echo "Attente du démarrage de Grafana..."
+          timeout 120 bash -c 'until docker exec monitoring_grafana /bin/sh -c "wget -qO- http://localhost:3000/api/health" | grep -q "\"database\":\"ok\""; do
+            sleep 5
+            echo "En attente..."
+          done'
+          
+          echo "Configuration de la source de données..."
+          docker exec monitoring_grafana /bin/sh -c 'wget -qO- --header="Content-Type: application/json" --user=admin:${{ env.GRAFANA_ADMIN_PASSWORD }} --post-data="{\"name\":\"Prometheus\",\"type\":\"prometheus\",\"url\":\"http://prometheus:9090\",\"access\":\"proxy\"}" http://localhost:3000/api/datasources'
 
       - name: "📝 Générer rapport"
         run: |
           echo "# Rapport de Monitoring" > monitoring/report.md
           echo "## État des services" >> monitoring/report.md
           docker-compose -f monitoring/docker-compose.yml ps >> monitoring/report.md
-          PROM_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' monitoring_prometheus)
+          
           echo "## Métriques disponibles" >> monitoring/report.md
-          curl -s "http://$PROM_IP:9090/api/v1/label/__name__/values" | jq . >> monitoring/report.md
+          docker exec monitoring_prometheus /bin/sh -c 'wget -qO- http://localhost:9090/api/v1/label/__name__/values' | jq . >> monitoring/report.md
+          
+          echo "## Configuration Grafana" >> monitoring/report.md
+          docker exec monitoring_grafana /bin/sh -c 'wget -qO- --user=admin:${{ env.GRAFANA_ADMIN_PASSWORD }} http://localhost:3000/api/datasources' | jq . >> monitoring/report.md
 
   notify:
     name: "5. Notifications Finales"
@@ -233,7 +244,7 @@ jobs:
           echo "- Commit: ${{ github.sha }}" >> final-report.md
           echo "- Date: $(date)" >> final-report.md
           echo "- URL: ${{ steps.prod-url.outputs.PROD_URL }}" >> final-report.md
-          echo "## Monitoring" >> final-report.md
+          echo "## Détails Monitoring" >> final-report.md
           cat monitoring/report.md >> final-report.md
 
       - name: "📧 Envoyer notification"
