@@ -6,18 +6,15 @@ on:
       - main
 
 env:
-  # Variables d'environnement globales
   SONAR_HOST_URL: http://localhost:9000
   K3S_VERSION: v1.26.5+k3s1
   TERRAFORM_VERSION: 1.5.5
   NAMESPACE: microservice
   DOCKER_REGISTRY: docker.io
   NODE_VERSION: 20
-  # Configuration monitoring
-  PROMETHEUS_SERVICE: prometheus-server
-  GRAFANA_SERVICE: grafana-service
-  GRAFANA_DASHBOARD_UID: gestion-trajet-dashboard
-  # Configuration email
+  PROMETHEUS_PORT: 9090
+  GRAFANA_PORT: 3000
+  GRAFANA_ADMIN_PASSWORD: rabaa123
   YOUR_EMAIL: elmbarkirabea@gmail.com
   EMAIL_FROM: "GitHub Actions <actions@github.com>"
 
@@ -180,48 +177,40 @@ jobs:
         working-directory: ./monitoring
         run: |
           docker-compose up -d
-          sleep 10  # Attente courte pour le démarrage
+          sleep 15
           docker-compose ps
-
-      - name: "🔍 Vérifier la connectivité réseau"
-        run: |
-          # Vérifier que les conteneurs communiquent entre eux
-          docker exec monitoring_prometheus curl -s http://nginx-exporter:9113/metrics || echo "Échec de connexion à nginx-exporter"
-          docker exec monitoring_grafana curl -s http://prometheus:9090/-/healthy || echo "Échec de connexion à Prometheus"
 
       - name: "📊 Vérifier Prometheus"
         run: |
-          # Utilisation du nom du service Docker Compose
-          timeout 60 bash -c 'until docker exec monitoring_prometheus curl -sSf http://localhost:9090/-/ready; do
+          PROM_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' monitoring_prometheus)
+          timeout 60 bash -c 'until curl -sSf "http://$PROM_IP:9090/-/ready"; do
             sleep 5
             echo "En attente de Prometheus..."
           done'
-
-          # Vérifier les targets depuis l'intérieur du conteneur
-          docker exec monitoring_prometheus curl -s http://localhost:9090/api/v1/targets | jq .
+          curl -s "http://$PROM_IP:9090/api/v1/targets" | jq .
 
       - name: "📈 Configurer Grafana"
         run: |
-          # Configuration depuis l'intérieur du conteneur
-          docker exec monitoring_grafana curl -X POST "http://localhost:3000/api/datasources" \
+          GRAFANA_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' monitoring_grafana)
+          curl -X POST "http://$GRAFANA_IP:3000/api/datasources" \
             -H "Content-Type: application/json" \
-            -u "admin:rabaa123" \
+            -u "admin:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
             -d '{
               "name":"Prometheus",
               "type":"prometheus",
               "url":"http://prometheus:9090",
               "access":"proxy",
               "basicAuth":false
-            }' || echo "La source de données existe peut-être déjà"
+            }' || echo "La source existe peut-être déjà"
 
-      - name: "📝 Générer rapport de monitoring"
+      - name: "📝 Générer rapport"
         run: |
           echo "# Rapport de Monitoring" > monitoring/report.md
           echo "## État des services" >> monitoring/report.md
           docker-compose -f monitoring/docker-compose.yml ps >> monitoring/report.md
-          
+          PROM_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' monitoring_prometheus)
           echo "## Métriques disponibles" >> monitoring/report.md
-          docker exec monitoring_prometheus curl -s http://localhost:9090/api/v1/label/__name__/values | jq . >> monitoring/report.md
+          curl -s "http://$PROM_IP:9090/api/v1/label/__name__/values" | jq . >> monitoring/report.md
 
   notify:
     name: "5. Notifications Finales"
@@ -232,11 +221,22 @@ jobs:
     steps:
       - name: "🌐 Récupérer l'URL de production"
         id: prod-url
-        working-directory: ./infra
         run: |
-          echo "PROD_URL=$(terraform -chdir=infra output -raw service_url)" >> $GITHUB_OUTPUT
+          cd infra
+          echo "PROD_URL=$(terraform output -raw service_url)" >> $GITHUB_OUTPUT
+          cd ..
 
-      - name: "📧 Envoyer rapport complet"
+      - name: "📧 Préparer le rapport final"
+        run: |
+          echo "# Rapport de déploiement" > final-report.md
+          echo "- Statut: ${{ job.status }}" >> final-report.md
+          echo "- Commit: ${{ github.sha }}" >> final-report.md
+          echo "- Date: $(date)" >> final-report.md
+          echo "- URL: ${{ steps.prod-url.outputs.PROD_URL }}" >> final-report.md
+          echo "## Monitoring" >> final-report.md
+          cat monitoring/report.md >> final-report.md
+
+      - name: "📧 Envoyer notification"
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
@@ -246,16 +246,5 @@ jobs:
           from: ${{ env.EMAIL_FROM }}
           to: ${{ env.YOUR_EMAIL }}
           subject: "Rapport de déploiement - ${{ github.repository }}"
-          body: |
-            Statut: ${{ job.status }}
-
-            Détails :
-            - Application: ${{ steps.prod-url.outputs.PROD_URL }}
-            - Commit: ${{ github.sha }}
-            - Date: $(date)
-            - Logs: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
-            Monitoring:
-            - Prometheus: http://${{ env.PROMETHEUS_SERVICE }}:9090
-            - Grafana: http://${{ env.GRAFANA_SERVICE }}:3000
+          body: file://final-report.md
           attachments: monitoring/report.md
