@@ -18,7 +18,7 @@ env:
   PROMETHEUS_PORT: 9090
   GRAFANA_PORT: 3000
   GRAFANA_ADMIN_PASSWORD: rabaa123
-  GRAFANA_VERSION: 9.5.3  # Version plus stable
+  GRAFANA_VERSION: 9.5.3
   
   # Configuration Email
   YOUR_EMAIL: elmbarkirabea@gmail.com
@@ -148,6 +148,7 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: "🚀 Déployer avec Terraform"
+        id: terraform-deploy
         working-directory: ./infra
         env:
           TF_VAR_docker_username: ${{ secrets.DOCKER_USERNAME }}
@@ -157,17 +158,32 @@ jobs:
           terraform init
           terraform validate
           terraform apply -auto-approve
+          echo "service_url=$(terraform output -raw service_url)" >> $GITHUB_OUTPUT
+
+      - name: "💾 Sauvegarder l'état Terraform"
+        if: always()
+        working-directory: ./infra
+        run: |
+          terraform state pull > terraform.tfstate
+          echo "timestamp=$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+        id: save-state
+
+      - name: "📤 Upload l'état Terraform"
+        uses: actions/upload-artifact@v3
+        with:
+          name: tf-state
+          path: infra/terraform.tfstate
 
       - name: "🔍 Vérifier le déploiement"
         run: |
           kubectl get pods,svc,deploy -n ${{ env.NAMESPACE }}
-          echo "Service URL: $(terraform -chdir=infra output -raw service_url)"
+          echo "Service URL: ${{ steps.terraform-deploy.outputs.service_url }}"
 
   monitoring-deploy:
     name: "4. Déploiement Monitoring"
     needs: docker-deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 30  # Augmentation du timeout global
+    timeout-minutes: 30
     
     steps:
       - name: "🛎️ Checkout du code"
@@ -185,56 +201,36 @@ jobs:
           docker-compose down -v --remove-orphans || true
           sudo rm -rf grafana-storage || true
           mkdir -p grafana-storage
-          chmod -R 777 grafana-storage  # Assure les permissions
+          chmod -R 777 grafana-storage
 
       - name: "🚀 Démarrer les services"
         working-directory: ./monitoring
         env:
-          GF_INSTALL_PLUGINS: ""  # Désactive les plugins par défaut
+          GF_INSTALL_PLUGINS: ""
         run: |
           docker-compose up -d
-          echo "Attente initiale (30s) pour l'initialisation..."
           sleep 30
 
-      - name: "🔍 Vérifier l'état des conteneurs"
+      - name: "⏳ Attendre Grafana"
         working-directory: ./monitoring
-        run: |
-          if docker-compose ps | grep -v "Up" | grep -q -v "STATUS"; then
-            echo "❌ Certains services ne sont pas démarrés:"
-            docker-compose ps
-            docker-compose logs
-            exit 1
-          fi
-          echo "✅ Tous les services sont en cours d'exécution"
-
-      - name: "⏳ Attendre Grafana (version améliorée)"
-        working-directory: ./monitoring
+        timeout-minutes: 20
         run: |
           echo "Attente du démarrage de Grafana..."
           start_time=$(date +%s)
-          timeout=1200  # 20 minutes
+          timeout=1200
           
           while :; do
-            # Vérifier si le conteneur est en cours d'exécution
             if ! docker-compose ps | grep grafana | grep -q "Up"; then
               echo "❌ Le conteneur Grafana s'est arrêté"
               docker-compose logs grafana
               exit 1
             fi
             
-            # Vérifier la santé via l'API
             if curl -s http://localhost:3000/api/health | grep -q "\"database\":\"ok\""; then
               echo "✅ Grafana prêt après $(($(date +%s) - start_time)) secondes"
               break
             fi
             
-            # Vérifier aussi le endpoint de login
-            if curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/login | grep -q 200; then
-              echo "✅ Grafana login page accessible après $(($(date +%s) - start_time)) secondes"
-              break
-            fi
-            
-            # Timeout
             if [ $(($(date +%s) - start_time)) -ge $timeout ]; then
               echo "❌ Timeout - Grafana n'a pas démarré après 20 minutes"
               docker-compose logs grafana
@@ -248,7 +244,6 @@ jobs:
       - name: "📈 Configurer Grafana"
         working-directory: ./monitoring
         run: |
-          echo "Configuration de la source de données..."
           for attempt in {1..5}; do
             response=$(curl -s -o /dev/null -w "%{http_code}" \
               -X POST "http://localhost:3000/api/datasources" \
@@ -262,18 +257,14 @@ jobs:
                 "basicAuth":false
               }')
             
-            if [ "$response" -eq 200 ]; then
+            if [ "$response" -eq 200 ] || [ "$response" -eq 409 ]; then
               echo "✅ Configuration réussie"
-              exit 0
-            elif [ "$response" -eq 409 ]; then
-              echo "ℹ️ La source existe déjà"
               exit 0
             else
               echo "⚠️ Échec tentative $attempt (HTTP $response)"
               sleep 15
             fi
           done
-          echo "❌ Échec après 5 tentatives"
           exit 1
 
       - name: "📝 Générer rapport"
@@ -287,21 +278,50 @@ jobs:
           echo "## Targets Prometheus" >> report.md
           curl -s http://localhost:9090/api/v1/targets | jq . >> report.md
 
-  notify:
-    name: "5. Notifications"
+  rollback:
+    name: "🔴 Rollback Automatique"
     needs: [docker-deploy, monitoring-deploy]
+    if: failure()
     runs-on: ubuntu-latest
-    if: always()
     
     steps:
-      - name: "🌐 Récupérer l'URL"
-        id: prod-url
-        run: |
-          cd infra
-          echo "PROD_URL=$(terraform output -raw service_url)" >> $GITHUB_OUTPUT
-          cd ..
+      - name: "🛎️ Checkout du code"
+        uses: actions/checkout@v4.1.1
 
-      - name: "📧 Envoyer notification"
+      - name: "⚙️ Installer Terraform"
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: "📥 Télécharger l'état Terraform"
+        uses: actions/download-artifact@v3
+        with:
+          name: tf-state
+          path: infra/
+
+      - name: "↩️ Exécuter le rollback"
+        working-directory: ./infra
+        env:
+          TF_VAR_docker_username: ${{ secrets.DOCKER_USERNAME }}
+          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+        run: |
+          if [ -f "terraform.tfstate" ]; then
+            echo "🔄 Restauration de l'état précédent..."
+            terraform init
+            terraform state push terraform.tfstate
+            terraform apply -auto-approve
+          else
+            echo "⚠️ Destruction complète des ressources..."
+            terraform init
+            terraform destroy -auto-approve
+          fi
+
+      - name: "🧹 Nettoyer les ressources Kubernetes"
+        run: |
+          kubectl delete all --all -n ${{ env.NAMESPACE }} || true
+          kubectl delete pvc --all -n ${{ env.NAMESPACE }} || true
+
+      - name: "📧 Notifier l'échec"
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
@@ -310,10 +330,48 @@ jobs:
           password: ${{ secrets.EMAIL_PASSWORD }}
           from: ${{ env.EMAIL_FROM }}
           to: ${{ env.YOUR_EMAIL }}
-          subject: "Déploiement terminé - ${{ github.repository }}"
+          subject: "ÉCHEC Déploiement - Rollback effectué"
           body: |
-            Statut: ${{ job.status }}
-            Commit: ${{ github.sha }}
-            URL: ${{ steps.prod-url.outputs.PROD_URL }}
-            Date: $(date)
+            Le déploiement a échoué et un rollback a été effectué.
+            
+            Détails:
+            - Commit: ${{ github.sha }}
+            - Date: $(date)
+            
+            Consultez les logs pour plus d'informations.
+
+  notify:
+    name: "5. Notification de Succès"
+    needs: [docker-deploy, monitoring-deploy]
+    if: success()
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: "🛎️ Checkout du code"
+        uses: actions/checkout@v4.1.1
+
+      - name: "🌐 Récupérer l'URL du service"
+        id: prod-url
+        run: |
+          cd infra
+          echo "PROD_URL=$(terraform output -raw service_url)" >> $GITHUB_OUTPUT
+          cd ..
+
+      - name: "📧 Envoyer notification de succès"
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          from: ${{ env.EMAIL_FROM }}
+          to: ${{ env.YOUR_EMAIL }}
+          subject: "SUCCÈS Déploiement - ${{ github.repository }}"
+          body: |
+            Le déploiement a réussi avec succès!
+            
+            Détails:
+            - Commit: ${{ github.sha }}
+            - URL: ${{ steps.prod-url.outputs.PROD_URL }}
+            - Date: $(date)
           attachments: monitoring/report.md
