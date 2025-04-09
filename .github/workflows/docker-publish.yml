@@ -18,7 +18,7 @@ env:
   PROMETHEUS_PORT: 9090
   GRAFANA_PORT: 3000
   GRAFANA_ADMIN_PASSWORD: rabaa123
-  GRAFANA_VERSION: 9.5.3
+  GRAFANA_VERSION: 9.5.3  # Version plus stable
   
   # Configuration Email
   YOUR_EMAIL: elmbarkirabea@gmail.com
@@ -159,24 +159,22 @@ jobs:
           terraform apply -auto-approve
 
       - name: "🔍 Vérifier le déploiement"
-        id: verify-deployment
         run: |
           kubectl get pods,svc,deploy -n ${{ env.NAMESPACE }}
           echo "Service URL: $(terraform -chdir=infra output -raw service_url)"
 
-      - name: "🔄 Rollback basique"
-        if: failure() && steps.verify-deployment.conclusion == 'failure'
+
+      - name: 🔄 Rollback basique
+        if: failure()
         run: |
-          echo "⏳ Début du rollback..."
-          kubectl rollout undo deployment/bibliom1 -n ${{ env.NAMESPACE }} || echo "⚠️ Rollback du deployment a échoué"
-          kubectl delete -n ${{ env.NAMESPACE }} --all pods,svc,deploy || echo "⚠️ Nettoyage des ressources a échoué"
-          echo "✅ Rollback terminé"
+            kubectl rollout undo deployment/bibliom1 -n bibliotheque || true
+            exit 1
 
   monitoring-deploy:
     name: "4. Déploiement Monitoring"
     needs: docker-deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 30  # Augmentation du timeout global
     
     steps:
       - name: "🛎️ Checkout du code"
@@ -194,36 +192,56 @@ jobs:
           docker-compose down -v --remove-orphans || true
           sudo rm -rf grafana-storage || true
           mkdir -p grafana-storage
-          chmod -R 777 grafana-storage
+          chmod -R 777 grafana-storage  # Assure les permissions
 
       - name: "🚀 Démarrer les services"
         working-directory: ./monitoring
         env:
-          GF_INSTALL_PLUGINS: ""
+          GF_INSTALL_PLUGINS: ""  # Désactive les plugins par défaut
         run: |
           docker-compose up -d
+          echo "Attente initiale (30s) pour l'initialisation..."
           sleep 30
 
-      - name: "⏳ Attendre Grafana"
+      - name: "🔍 Vérifier l'état des conteneurs"
         working-directory: ./monitoring
-        timeout-minutes: 20
+        run: |
+          if docker-compose ps | grep -v "Up" | grep -q -v "STATUS"; then
+            echo "❌ Certains services ne sont pas démarrés:"
+            docker-compose ps
+            docker-compose logs
+            exit 1
+          fi
+          echo "✅ Tous les services sont en cours d'exécution"
+
+      - name: "⏳ Attendre Grafana (version améliorée)"
+        working-directory: ./monitoring
         run: |
           echo "Attente du démarrage de Grafana..."
           start_time=$(date +%s)
-          timeout=1200
+          timeout=1200  # 20 minutes
           
           while :; do
+            # Vérifier si le conteneur est en cours d'exécution
             if ! docker-compose ps | grep grafana | grep -q "Up"; then
               echo "❌ Le conteneur Grafana s'est arrêté"
               docker-compose logs grafana
               exit 1
             fi
             
+            # Vérifier la santé via l'API
             if curl -s http://localhost:3000/api/health | grep -q "\"database\":\"ok\""; then
               echo "✅ Grafana prêt après $(($(date +%s) - start_time)) secondes"
               break
             fi
             
+            # Vérifier aussi le endpoint de login
+            if curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/login | grep -q 200; then
+              echo "✅ Grafana login page accessible après $(($(date +%s) - start_time)) secondes"
+              break
+            fi
+            
+            # Timeout
             if [ $(($(date +%s) - start_time)) -ge $timeout ]; then
               echo "❌ Timeout - Grafana n'a pas démarré après 20 minutes"
               docker-compose logs grafana
@@ -237,6 +255,7 @@ jobs:
       - name: "📈 Configurer Grafana"
         working-directory: ./monitoring
         run: |
+          echo "Configuration de la source de données..."
           for attempt in {1..5}; do
             response=$(curl -s -o /dev/null -w "%{http_code}" \
               -X POST "http://localhost:3000/api/datasources" \
@@ -250,14 +269,18 @@ jobs:
                 "basicAuth":false
               }')
             
-            if [ "$response" -eq 200 ] || [ "$response" -eq 409 ]; then
+            if [ "$response" -eq 200 ]; then
               echo "✅ Configuration réussie"
+              exit 0
+            elif [ "$response" -eq 409 ]; then
+              echo "ℹ️ La source existe déjà"
               exit 0
             else
               echo "⚠️ Échec tentative $attempt (HTTP $response)"
               sleep 15
             fi
           done
+          echo "❌ Échec après 5 tentatives"
           exit 1
 
       - name: "📝 Générer rapport"
