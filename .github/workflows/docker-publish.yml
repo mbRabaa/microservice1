@@ -148,7 +148,6 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: "🚀 Déployer avec Terraform"
-        id: terraform-deploy
         working-directory: ./infra
         env:
           TF_VAR_docker_username: ${{ secrets.DOCKER_USERNAME }}
@@ -158,26 +157,20 @@ jobs:
           terraform init
           terraform validate
           terraform apply -auto-approve
-          echo "service_url=$(terraform output -raw service_url)" >> $GITHUB_OUTPUT
-
-      - name: "💾 Sauvegarder l'état Terraform"
-        if: always()
-        working-directory: ./infra
-        run: |
-          terraform state pull > terraform.tfstate
-          echo "timestamp=$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
-        id: save-state
-
-      - name: "📤 Upload l'état Terraform"
-        uses: actions/upload-artifact@v3
-        with:
-          name: tf-state
-          path: infra/terraform.tfstate
 
       - name: "🔍 Vérifier le déploiement"
+        id: verify-deployment
         run: |
           kubectl get pods,svc,deploy -n ${{ env.NAMESPACE }}
-          echo "Service URL: ${{ steps.terraform-deploy.outputs.service_url }}"
+          echo "Service URL: $(terraform -chdir=infra output -raw service_url)"
+
+      - name: "🔄 Rollback basique"
+        if: failure() && steps.verify-deployment.conclusion == 'failure'
+        run: |
+          echo "⏳ Début du rollback..."
+          kubectl rollout undo deployment/bibliom1 -n ${{ env.NAMESPACE }} || echo "⚠️ Rollback du deployment a échoué"
+          kubectl delete -n ${{ env.NAMESPACE }} --all pods,svc,deploy || echo "⚠️ Nettoyage des ressources a échoué"
+          echo "✅ Rollback terminé"
 
   monitoring-deploy:
     name: "4. Déploiement Monitoring"
@@ -278,86 +271,21 @@ jobs:
           echo "## Targets Prometheus" >> report.md
           curl -s http://localhost:9090/api/v1/targets | jq . >> report.md
 
-  rollback:
-    name: "🔴 Rollback Automatique"
-    needs: [docker-deploy, monitoring-deploy]
-    if: failure()
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: "🛎️ Checkout du code"
-        uses: actions/checkout@v4.1.1
-
-      - name: "⚙️ Installer Terraform"
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-
-      - name: "📥 Télécharger l'état Terraform"
-        uses: actions/download-artifact@v3
-        with:
-          name: tf-state
-          path: infra/
-
-      - name: "↩️ Exécuter le rollback"
-        working-directory: ./infra
-        env:
-          TF_VAR_docker_username: ${{ secrets.DOCKER_USERNAME }}
-          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
-        run: |
-          if [ -f "terraform.tfstate" ]; then
-            echo "🔄 Restauration de l'état précédent..."
-            terraform init
-            terraform state push terraform.tfstate
-            terraform apply -auto-approve
-          else
-            echo "⚠️ Destruction complète des ressources..."
-            terraform init
-            terraform destroy -auto-approve
-          fi
-
-      - name: "🧹 Nettoyer les ressources Kubernetes"
-        run: |
-          kubectl delete all --all -n ${{ env.NAMESPACE }} || true
-          kubectl delete pvc --all -n ${{ env.NAMESPACE }} || true
-
-      - name: "📧 Notifier l'échec"
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          username: ${{ secrets.EMAIL_USERNAME }}
-          password: ${{ secrets.EMAIL_PASSWORD }}
-          from: ${{ env.EMAIL_FROM }}
-          to: ${{ env.YOUR_EMAIL }}
-          subject: "ÉCHEC Déploiement - Rollback effectué"
-          body: |
-            Le déploiement a échoué et un rollback a été effectué.
-            
-            Détails:
-            - Commit: ${{ github.sha }}
-            - Date: $(date)
-            
-            Consultez les logs pour plus d'informations.
-
   notify:
-    name: "5. Notification de Succès"
+    name: "5. Notifications"
     needs: [docker-deploy, monitoring-deploy]
-    if: success()
     runs-on: ubuntu-latest
+    if: always()
     
     steps:
-      - name: "🛎️ Checkout du code"
-        uses: actions/checkout@v4.1.1
-
-      - name: "🌐 Récupérer l'URL du service"
+      - name: "🌐 Récupérer l'URL"
         id: prod-url
         run: |
           cd infra
           echo "PROD_URL=$(terraform output -raw service_url)" >> $GITHUB_OUTPUT
           cd ..
 
-      - name: "📧 Envoyer notification de succès"
+      - name: "📧 Envoyer notification"
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
@@ -366,12 +294,10 @@ jobs:
           password: ${{ secrets.EMAIL_PASSWORD }}
           from: ${{ env.EMAIL_FROM }}
           to: ${{ env.YOUR_EMAIL }}
-          subject: "SUCCÈS Déploiement - ${{ github.repository }}"
+          subject: "Déploiement terminé - ${{ github.repository }}"
           body: |
-            Le déploiement a réussi avec succès!
-            
-            Détails:
-            - Commit: ${{ github.sha }}
-            - URL: ${{ steps.prod-url.outputs.PROD_URL }}
-            - Date: $(date)
+            Statut: ${{ job.status }}
+            Commit: ${{ github.sha }}
+            URL: ${{ steps.prod-url.outputs.PROD_URL }}
+            Date: $(date)
           attachments: monitoring/report.md
