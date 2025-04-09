@@ -166,7 +166,7 @@ jobs:
     name: "4. Déploiement Monitoring"
     needs: docker-deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 15
     
     steps:
       - name: "🛎️ Checkout du code"
@@ -178,49 +178,57 @@ jobs:
           sudo chmod +x /usr/local/bin/docker-compose
           docker-compose --version
     
-      - name: "🚀 Déployer la stack monitoring"
+      - name: "🧹 Nettoyer l'environnement"
         working-directory: ./monitoring
         run: |
-          docker-compose down || true
+          docker-compose down -v --remove-orphans || true
+          sudo rm -rf grafana-storage || true
+          mkdir -p grafana-storage
+
+      - name: "🚀 Démarrer les services"
+        working-directory: ./monitoring
+        run: |
           docker-compose up -d
-          echo "Attente initiale (30s)..."
+          echo "Attente initiale (30s) pour l'initialisation..."
           sleep 30
-          docker-compose ps
 
-      - name: "🔍 Vérifier les services"
+      - name: "🔍 Vérifier l'état des conteneurs"
         working-directory: ./monitoring
         run: |
-          for service in $(docker-compose ps --services); do
-            if ! docker-compose ps | grep "$service" | grep -q "Up"; then
-              echo "❌ $service non démarré"
-              docker-compose logs "$service"
-              exit 1
-            fi
-          done
-          echo "✅ Tous les services sont up"
+          # Vérifier que tous les services sont en cours d'exécution
+          if docker-compose ps | grep -v "Up" | grep -q -v "STATUS"; then
+            echo "❌ Certains services ne sont pas démarrés:"
+            docker-compose ps
+            echo "Logs des services:"
+            docker-compose logs
+            exit 1
+          fi
+          echo "✅ Tous les services sont en cours d'exécution"
 
-      - name: "⏳ Attendre Grafana"
+      - name: "⏳ Attendre Grafana (avec timeout long)"
         working-directory: ./monitoring
         run: |
-          for i in {1..30}; do
-            if curl -s http://localhost:3000/api/health | grep -q "\"database\":\"ok\""; then
-              echo "✅ Grafana prêt après ${i}0s"
-              break
-            fi
-            echo "Attente ($i/30)..."
+          echo "Attente du démarrage complet de Grafana (peut prendre plusieurs minutes)..."
+          start_time=$(date +%s)
+          timeout 600 bash -c 'until curl -s http://localhost:3000/api/health | grep -q "\"database\":\"ok\""; do
             sleep 10
-            if [ $i -eq 30 ]; then
-              echo "❌ Timeout Grafana"
+            echo "Temps écoulé: $(($(date +%s) - start_time))s"
+            
+            # Vérifier que le conteneur est toujours en cours d'exécution
+            if ! docker-compose ps | grep grafana | grep -q "Up"; then
+              echo "❌ Le conteneur Grafana s'est arrêté"
               docker-compose logs grafana
               exit 1
             fi
-          done
+          done'
+          echo "✅ Grafana prêt après $(($(date +%s) - start_time)) secondes"
 
-      - name: "📈 Configurer Grafana"
+      - name: "📈 Configurer Grafana avec réessais"
         working-directory: ./monitoring
         run: |
           for attempt in {1..5}; do
-            RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+            echo "Tentative $attempt/5 de configuration..."
+            response=$(curl -s -o /dev/null -w "%{http_code}" \
               -X POST "http://localhost:3000/api/datasources" \
               -H "Content-Type: application/json" \
               -u "admin:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
@@ -232,26 +240,34 @@ jobs:
                 "basicAuth":false
               }')
             
-            if [ "$RESPONSE" -eq 200 ]; then
-              echo "✅ Datasource configurée"
+            if [ "$response" -eq 200 ]; then
+              echo "✅ Configuration réussie"
               break
-            elif [ "$RESPONSE" -eq 409 ]; then
-              echo "ℹ️ Datasource existe déjà"
+            elif [ "$response" -eq 409 ]; then
+              echo "ℹ️ La source existe déjà"
               break
             else
-              echo "⚠️ Échec $attempt/5 (HTTP $RESPONSE)"
+              echo "Échec (HTTP $response), nouvel essai dans 15s..."
               sleep 15
+            fi
+            
+            if [ $attempt -eq 5 ]; then
+              echo "❌ Échec après 5 tentatives"
+              docker-compose logs grafana
+              exit 1
             fi
           done
 
       - name: "📝 Générer rapport"
         working-directory: ./monitoring
         run: |
-          echo "# Rapport $(date)" > report.md
-          echo "## Services" >> report.md
+          echo "# Rapport de Monitoring" > report.md
+          echo "## État des services" >> report.md
           docker-compose ps >> report.md
-          echo "## Métriques" >> report.md
+          echo "## Métriques NGINX" >> report.md
           curl -s http://localhost:9113/metrics | head -n 20 >> report.md
+          echo "## Targets Prometheus" >> report.md
+          curl -s http://localhost:9090/api/v1/targets | jq . >> report.md
 
   notify:
     name: "5. Notifications"
@@ -260,14 +276,14 @@ jobs:
     if: always()
     
     steps:
-      - name: "🌐 Récupérer URL"
+      - name: "🌐 Récupérer l'URL"
         id: prod-url
         run: |
           cd infra
           echo "PROD_URL=$(terraform output -raw service_url)" >> $GITHUB_OUTPUT
           cd ..
 
-      - name: "📧 Envoyer email"
+      - name: "📧 Envoyer notification"
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
@@ -276,9 +292,10 @@ jobs:
           password: ${{ secrets.EMAIL_PASSWORD }}
           from: ${{ env.EMAIL_FROM }}
           to: ${{ env.YOUR_EMAIL }}
-          subject: "Déploiement ${{ github.sha }}"
+          subject: "Déploiement terminé - ${{ github.repository }}"
           body: |
             Statut: ${{ job.status }}
+            Commit: ${{ github.sha }}
             URL: ${{ steps.prod-url.outputs.PROD_URL }}
             Date: $(date)
           attachments: monitoring/report.md
