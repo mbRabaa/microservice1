@@ -181,15 +181,9 @@ jobs:
       - name: "📦 Déployer la stack monitoring"
         working-directory: ./monitoring
         run: |
-          # Démarrer tous les services
           docker-compose up -d
-          
-          # Attendre le démarrage complet
-          echo "Attente du démarrage des services (60 secondes)..."
-          sleep 60
-          
-          # Vérifier l'état de tous les conteneurs
-          echo "État des conteneurs:"
+          echo "Attente du démarrage des services (90 secondes)..."
+          sleep 90
           docker-compose ps -a
     
       - name: "🔍 Vérifier les services individuels"
@@ -209,9 +203,12 @@ jobs:
             exit 1
           fi
     
-          # 3. Vérifier Prometheus
-          if ! curl -s http://localhost:9090/-/ready | grep -q "Prometheus is Ready"; then
-            echo "❌ Prometheus ne répond pas"
+          # 3. Vérifier Prometheus (version corrigée)
+          PROMETHEUS_READY=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9090/-/ready)
+          if [ "$PROMETHEUS_READY" != "200" ]; then
+            echo "❌ Prometheus ne répond pas correctement (HTTP $PROMETHEUS_READY)"
+            echo "Réponse de /-/ready:"
+            curl -v http://localhost:9090/-/ready || true
             docker-compose logs prometheus
             exit 1
           fi
@@ -227,7 +224,7 @@ jobs:
       - name: "📈 Configurer Grafana"
         run: |
           # Attendre que Grafana soit prêt
-          timeout 120 bash -c 'until curl -s http://localhost:3000/api/health | grep -q "\"database\":\"ok\""; do
+          timeout 180 bash -c 'until curl -s http://localhost:3000/api/health | grep -q "\"database\":\"ok\""; do
             sleep 5
             echo "En attente du démarrage de Grafana..."
           done'
