@@ -195,39 +195,51 @@ jobs:
       - name: "🔍 Vérifier l'état des conteneurs"
         working-directory: ./monitoring
         run: |
-          # Vérifier que tous les services sont en cours d'exécution
           if docker-compose ps | grep -v "Up" | grep -q -v "STATUS"; then
             echo "❌ Certains services ne sont pas démarrés:"
             docker-compose ps
-            echo "Logs des services:"
             docker-compose logs
             exit 1
           fi
           echo "✅ Tous les services sont en cours d'exécution"
 
-      - name: "⏳ Attendre Grafana (avec timeout long)"
+      - name: "⏳ Attendre Grafana (version corrigée)"
         working-directory: ./monitoring
         run: |
-          echo "Attente du démarrage complet de Grafana (peut prendre plusieurs minutes)..."
+          echo "Attente du démarrage de Grafana..."
           start_time=$(date +%s)
-          timeout 600 bash -c 'until curl -s http://localhost:3000/api/health | grep -q "\"database\":\"ok\""; do
-            sleep 10
-            echo "Temps écoulé: $(($(date +%s) - start_time))s"
-            
-            # Vérifier que le conteneur est toujours en cours d'exécution
+          timeout=600  # 10 minutes en secondes
+          
+          while :; do
+            # Vérifier si le conteneur est toujours en cours d'exécution
             if ! docker-compose ps | grep grafana | grep -q "Up"; then
               echo "❌ Le conteneur Grafana s'est arrêté"
               docker-compose logs grafana
               exit 1
             fi
-          done'
-          echo "✅ Grafana prêt après $(($(date +%s) - start_time)) secondes"
+            
+            # Vérifier la santé de Grafana
+            if curl -s http://localhost:3000/api/health | grep -q "\"database\":\"ok\""; then
+              echo "✅ Grafana prêt après $(($(date +%s) - start_time)) secondes"
+              break
+            fi
+            
+            # Vérifier le timeout
+            if [ $(($(date +%s) - start_time)) -ge $timeout ]; then
+              echo "❌ Timeout - Grafana n'a pas démarré après 10 minutes"
+              docker-compose logs grafana
+              exit 1
+            fi
+            
+            echo "En attente... ($(($(date +%s) - start_time))s)"
+            sleep 10
+          done
 
-      - name: "📈 Configurer Grafana avec réessais"
+      - name: "📈 Configurer Grafana"
         working-directory: ./monitoring
         run: |
+          echo "Configuration de la source de données..."
           for attempt in {1..5}; do
-            echo "Tentative $attempt/5 de configuration..."
             response=$(curl -s -o /dev/null -w "%{http_code}" \
               -X POST "http://localhost:3000/api/datasources" \
               -H "Content-Type: application/json" \
@@ -242,21 +254,17 @@ jobs:
             
             if [ "$response" -eq 200 ]; then
               echo "✅ Configuration réussie"
-              break
+              exit 0
             elif [ "$response" -eq 409 ]; then
               echo "ℹ️ La source existe déjà"
-              break
+              exit 0
             else
-              echo "Échec (HTTP $response), nouvel essai dans 15s..."
+              echo "⚠️ Échec tentative $attempt (HTTP $response)"
               sleep 15
             fi
-            
-            if [ $attempt -eq 5 ]; then
-              echo "❌ Échec après 5 tentatives"
-              docker-compose logs grafana
-              exit 1
-            fi
           done
+          echo "❌ Échec après 5 tentatives"
+          exit 1
 
       - name: "📝 Générer rapport"
         working-directory: ./monitoring
