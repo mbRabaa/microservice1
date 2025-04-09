@@ -166,7 +166,7 @@ jobs:
     name: "4. Déploiement et Vérification Monitoring"
     needs: docker-deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45  # Augmenté le timeout global
     
     steps:
       - name: "🛎️ Checkout du code"
@@ -178,12 +178,12 @@ jobs:
           sudo chmod +x /usr/local/bin/docker-compose
           docker-compose --version
     
-      - name: "📦 Déployer la stack monitoring"
+      - name: "🚀 Déployer la stack monitoring"
         working-directory: ./monitoring
         run: |
           docker-compose up -d
-          echo "Attente du démarrage des services (90 secondes)..."
-          sleep 90
+          echo "Attente du démarrage des services (120 secondes)..."
+          sleep 120
           docker-compose ps -a
     
       - name: "🔍 Vérifier les services individuels"
@@ -203,7 +203,7 @@ jobs:
             exit 1
           fi
     
-          # 3. Vérifier Prometheus (version corrigée)
+          # 3. Vérifier Prometheus
           PROMETHEUS_READY=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9090/-/ready)
           if [ "$PROMETHEUS_READY" != "200" ]; then
             echo "❌ Prometheus ne répond pas correctement (HTTP $PROMETHEUS_READY)"
@@ -221,28 +221,65 @@ jobs:
             exit 1
           fi
     
+      - name: "🔍 Vérifier l'état de Grafana"
+        run: |
+          echo "Vérification de l'état des conteneurs:"
+          docker-compose ps
+          
+          echo "Logs de Grafana (50 dernières lignes):"
+          docker-compose logs grafana --tail=50
+          
+          echo "Vérification de la santé de Grafana:"
+          curl -v http://localhost:3000/api/health || true
+    
       - name: "📈 Configurer Grafana"
         run: |
-          # Attendre que Grafana soit prêt
-          timeout 180 bash -c 'until curl -s http://localhost:3000/api/health | grep -q "\"database\":\"ok\""; do
+          # Attendre que Grafana soit prêt avec un timeout plus long
+          echo "En attente du démarrage de Grafana..."
+          timeout 300 bash -c 'until curl -s http://localhost:3000/api/health | grep -q "\"database\":\"ok\""; do
             sleep 5
-            echo "En attente du démarrage de Grafana..."
+            echo "Encore en attente..."
           done'
           
-          # Configurer la source de données
-          curl -X POST "http://localhost:3000/api/datasources" \
-            -H "Content-Type: application/json" \
-            -u "admin:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
-            -d '{
-              "name":"Prometheus",
-              "type":"prometheus",
-              "url":"http://prometheus:9090",
-              "access":"proxy",
-              "basicAuth":false
-            }' || {
-              echo "⚠️ La source de données existe peut-être déjà"
-              curl -s --user "admin:${{ env.GRAFANA_ADMIN_PASSWORD }}" http://localhost:3000/api/datasources | jq .
-            }
+          # Vérifier si Grafana est vraiment prêt
+          GRAFANA_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/api/health)
+          if [ "$GRAFANA_STATUS" != "200" ]; then
+            echo "❌ Grafana n'a pas démarré correctement (HTTP $GRAFANA_STATUS)"
+            echo "Logs complets de Grafana:"
+            docker-compose logs grafana
+            exit 1
+          fi
+          
+          # Configurer la source de données avec plus de tentatives
+          for i in {1..5}; do
+            echo "Tentative $i de configuration de la source de données..."
+            RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+              -X POST "http://localhost:3000/api/datasources" \
+              -H "Content-Type: application/json" \
+              -u "admin:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
+              -d '{
+                "name":"Prometheus",
+                "type":"prometheus",
+                "url":"http://prometheus:9090",
+                "access":"proxy",
+                "basicAuth":false
+              }')
+            
+            if [ "$RESPONSE" = "200" ]; then
+              echo "✅ Source de données configurée avec succès"
+              break
+            elif [ "$RESPONSE" = "409" ]; then
+              echo "ℹ️ La source de données existe déjà"
+              break
+            else
+              echo "⚠️ Échec de la configuration (HTTP $RESPONSE)"
+              if [ $i -eq 5 ]; then
+                echo "❌ Échec après 5 tentatives"
+                exit 1
+              fi
+              sleep 10
+            fi
+          done
     
       - name: "📝 Générer rapport"
         run: |
