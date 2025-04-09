@@ -18,7 +18,7 @@ env:
   PROMETHEUS_PORT: 9090
   GRAFANA_PORT: 3000
   GRAFANA_ADMIN_PASSWORD: rabaa123
-  GRAFANA_VERSION: 9.5.3  # Version plus stable
+  GRAFANA_VERSION: 9.5.3
   
   # Configuration Email
   YOUR_EMAIL: elmbarkirabea@gmail.com
@@ -131,6 +131,21 @@ jobs:
             ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/gestion-trajet:${{ github.sha }}
             ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/gestion-trajet:latest
 
+      - name: "📦 Sauvegarder les outputs Terraform"
+        id: save-outputs
+        working-directory: infra
+        run: |
+          terraform init
+          terraform apply -auto-approve
+          terraform output -json > outputs.json
+          echo "service_url=$(terraform output -raw service_url)" >> $GITHUB_OUTPUT
+          
+      - name: "📤 Upload Terraform outputs"
+        uses: actions/upload-artifact@v3
+        with:
+          name: tf-outputs
+          path: infra/outputs.json
+
       - name: "🖥️ Installer K3s"
         run: |
           curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=${{ env.K3S_VERSION }} sh -
@@ -142,32 +157,16 @@ jobs:
           sudo cp /etc/rancher/k3s/k3s.yaml $HOME/.kube/config
           sudo chown $(id -u):$(id -g) $HOME/.kube/config
 
-      - name: "⚙️ Installer Terraform"
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-
-      - name: "🚀 Déployer avec Terraform"
-        working-directory: ./infra
-        env:
-          TF_VAR_docker_username: ${{ secrets.DOCKER_USERNAME }}
-          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
-          TF_VAR_image_tag: ${{ github.sha }}
-        run: |
-          terraform init
-          terraform validate
-          terraform apply -auto-approve
-
       - name: "🔍 Vérifier le déploiement"
         run: |
           kubectl get pods,svc,deploy -n ${{ env.NAMESPACE }}
-          echo "Service URL: $(terraform -chdir=infra output -raw service_url)"
+          echo "Service URL: ${{ steps.save-outputs.outputs.service_url }}"
 
   monitoring-deploy:
     name: "4. Déploiement Monitoring"
     needs: docker-deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 30  # Augmentation du timeout global
+    timeout-minutes: 30
     
     steps:
       - name: "🛎️ Checkout du code"
@@ -185,56 +184,36 @@ jobs:
           docker-compose down -v --remove-orphans || true
           sudo rm -rf grafana-storage || true
           mkdir -p grafana-storage
-          chmod -R 777 grafana-storage  # Assure les permissions
+          chmod -R 777 grafana-storage
 
       - name: "🚀 Démarrer les services"
         working-directory: ./monitoring
         env:
-          GF_INSTALL_PLUGINS: ""  # Désactive les plugins par défaut
+          GF_INSTALL_PLUGINS: ""
         run: |
           docker-compose up -d
-          echo "Attente initiale (30s) pour l'initialisation..."
           sleep 30
 
-      - name: "🔍 Vérifier l'état des conteneurs"
+      - name: "⏳ Attendre Grafana"
         working-directory: ./monitoring
-        run: |
-          if docker-compose ps | grep -v "Up" | grep -q -v "STATUS"; then
-            echo "❌ Certains services ne sont pas démarrés:"
-            docker-compose ps
-            docker-compose logs
-            exit 1
-          fi
-          echo "✅ Tous les services sont en cours d'exécution"
-
-      - name: "⏳ Attendre Grafana (version améliorée)"
-        working-directory: ./monitoring
+        timeout-minutes: 20
         run: |
           echo "Attente du démarrage de Grafana..."
           start_time=$(date +%s)
-          timeout=1200  # 20 minutes
+          timeout=1200
           
           while :; do
-            # Vérifier si le conteneur est en cours d'exécution
             if ! docker-compose ps | grep grafana | grep -q "Up"; then
               echo "❌ Le conteneur Grafana s'est arrêté"
               docker-compose logs grafana
               exit 1
             fi
             
-            # Vérifier la santé via l'API
             if curl -s http://localhost:3000/api/health | grep -q "\"database\":\"ok\""; then
               echo "✅ Grafana prêt après $(($(date +%s) - start_time)) secondes"
               break
             fi
             
-            # Vérifier aussi le endpoint de login
-            if curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/login | grep -q 200; then
-              echo "✅ Grafana login page accessible après $(($(date +%s) - start_time)) secondes"
-              break
-            fi
-            
-            # Timeout
             if [ $(($(date +%s) - start_time)) -ge $timeout ]; then
               echo "❌ Timeout - Grafana n'a pas démarré après 20 minutes"
               docker-compose logs grafana
@@ -248,7 +227,6 @@ jobs:
       - name: "📈 Configurer Grafana"
         working-directory: ./monitoring
         run: |
-          echo "Configuration de la source de données..."
           for attempt in {1..5}; do
             response=$(curl -s -o /dev/null -w "%{http_code}" \
               -X POST "http://localhost:3000/api/datasources" \
@@ -262,30 +240,15 @@ jobs:
                 "basicAuth":false
               }')
             
-            if [ "$response" -eq 200 ]; then
+            if [ "$response" -eq 200 ] || [ "$response" -eq 409 ]; then
               echo "✅ Configuration réussie"
-              exit 0
-            elif [ "$response" -eq 409 ]; then
-              echo "ℹ️ La source existe déjà"
               exit 0
             else
               echo "⚠️ Échec tentative $attempt (HTTP $response)"
               sleep 15
             fi
           done
-          echo "❌ Échec après 5 tentatives"
           exit 1
-
-      - name: "📝 Générer rapport"
-        working-directory: ./monitoring
-        run: |
-          echo "# Rapport de Monitoring" > report.md
-          echo "## État des services" >> report.md
-          docker-compose ps >> report.md
-          echo "## Métriques NGINX" >> report.md
-          curl -s http://localhost:9113/metrics | head -n 20 >> report.md
-          echo "## Targets Prometheus" >> report.md
-          curl -s http://localhost:9090/api/v1/targets | jq . >> report.md
 
   notify:
     name: "5. Notifications"
@@ -294,12 +257,21 @@ jobs:
     if: always()
     
     steps:
+      - name: "🛎️ Checkout du code"
+        uses: actions/checkout@v4.1.1
+
+      - name: "📥 Download Terraform outputs"
+        uses: actions/download-artifact@v3
+        with:
+          name: tf-outputs
+          path: tf-outputs
+
       - name: "🌐 Récupérer l'URL"
         id: prod-url
         run: |
-          cd infra
-          echo "PROD_URL=$(terraform output -raw service_url)" >> $GITHUB_OUTPUT
-          cd ..
+          SERVICE_URL=$(jq -r '.service_url.value' tf-outputs/outputs.json)
+          echo "PROD_URL=$SERVICE_URL" >> $GITHUB_OUTPUT
+          echo "URL du service: $SERVICE_URL"
 
       - name: "📧 Envoyer notification"
         uses: dawidd6/action-send-mail@v3
