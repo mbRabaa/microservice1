@@ -166,7 +166,7 @@ jobs:
     name: "4. Déploiement Monitoring"
     needs: docker-deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     
     steps:
       - name: "🛎️ Checkout du code"
@@ -181,102 +181,93 @@ jobs:
       - name: "🚀 Déployer la stack monitoring"
         working-directory: ./monitoring
         run: |
-          # Vérifier que le fichier docker-compose.yml existe
-          if [ ! -f "docker-compose.yml" ]; then
-            echo "❌ Fichier docker-compose.yml manquant dans le dossier monitoring"
-            ls -la
-            exit 1
-          fi
-          
+          docker-compose down || true
           docker-compose up -d
-          echo "Attente du démarrage des services (120 secondes)..."
-          sleep 120
-          
-          echo "État des conteneurs:"
+          echo "Attente initiale (30s)..."
+          sleep 30
           docker-compose ps
-    
+
       - name: "🔍 Vérifier les services"
         working-directory: ./monitoring
         run: |
-          # Vérifier que tous les services sont en cours d'exécution
-          if docker-compose ps | grep -v "Up" | grep -q -v "STATUS"; then
-            echo "❌ Certains services ne sont pas démarrés:"
-            docker-compose ps
-            echo "Logs des services:"
-            docker-compose logs
-            exit 1
-          fi
-          
-          echo "✅ Tous les services sont en cours d'exécution"
-          docker-compose ps
+          for service in $(docker-compose ps --services); do
+            if ! docker-compose ps | grep "$service" | grep -q "Up"; then
+              echo "❌ $service non démarré"
+              docker-compose logs "$service"
+              exit 1
+            fi
+          done
+          echo "✅ Tous les services sont up"
+
+      - name: "⏳ Attendre Grafana"
+        working-directory: ./monitoring
+        run: |
+          for i in {1..30}; do
+            if curl -s http://localhost:3000/api/health | grep -q "\"database\":\"ok\""; then
+              echo "✅ Grafana prêt après ${i}0s"
+              break
+            fi
+            echo "Attente ($i/30)..."
+            sleep 10
+            if [ $i -eq 30 ]; then
+              echo "❌ Timeout Grafana"
+              docker-compose logs grafana
+              exit 1
+            fi
+          done
 
       - name: "📈 Configurer Grafana"
         working-directory: ./monitoring
         run: |
-          # Attendre que Grafana soit prêt
-          echo "En attente du démarrage de Grafana..."
-          timeout 180 bash -c 'until curl -s http://localhost:3000/api/health | grep -q "\"database\":\"ok\""; do
-            sleep 5
-            echo "Encore en attente..."
-          done'
-          
-          # Configurer la source de données
-          echo "Configuration de la source de données Prometheus..."
-          curl -X POST "http://localhost:3000/api/datasources" \
-            -H "Content-Type: application/json" \
-            -u "admin:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
-            -d '{
-              "name":"Prometheus",
-              "type":"prometheus",
-              "url":"http://prometheus:9090",
-              "access":"proxy",
-              "basicAuth":false
-            }' || {
-              echo "⚠️ La source de données existe peut-être déjà"
-              curl -s --user "admin:${{ env.GRAFANA_ADMIN_PASSWORD }}" http://localhost:3000/api/datasources | jq .
-            }
+          for attempt in {1..5}; do
+            RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+              -X POST "http://localhost:3000/api/datasources" \
+              -H "Content-Type: application/json" \
+              -u "admin:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
+              -d '{
+                "name":"Prometheus",
+                "type":"prometheus",
+                "url":"http://prometheus:9090",
+                "access":"proxy",
+                "basicAuth":false
+              }')
+            
+            if [ "$RESPONSE" -eq 200 ]; then
+              echo "✅ Datasource configurée"
+              break
+            elif [ "$RESPONSE" -eq 409 ]; then
+              echo "ℹ️ Datasource existe déjà"
+              break
+            else
+              echo "⚠️ Échec $attempt/5 (HTTP $RESPONSE)"
+              sleep 15
+            fi
+          done
 
       - name: "📝 Générer rapport"
         working-directory: ./monitoring
         run: |
-          echo "# Rapport de Monitoring" > report.md
-          echo "## État des services" >> report.md
+          echo "# Rapport $(date)" > report.md
+          echo "## Services" >> report.md
           docker-compose ps >> report.md
-          
-          echo "## Métriques NGINX" >> report.md
+          echo "## Métriques" >> report.md
           curl -s http://localhost:9113/metrics | head -n 20 >> report.md
-          
-          echo "## Targets Prometheus" >> report.md
-          curl -s http://localhost:9090/api/v1/targets | jq . >> report.md
-          
-          echo "## Dashboards Grafana" >> report.md
-          curl -s --user "admin:${{ env.GRAFANA_ADMIN_PASSWORD }}" http://localhost:3000/api/search | jq . >> report.md
 
   notify:
-    name: "5. Notifications Finales"
+    name: "5. Notifications"
     needs: [docker-deploy, monitoring-deploy]
     runs-on: ubuntu-latest
     if: always()
     
     steps:
-      - name: "🌐 Récupérer l'URL de production"
+      - name: "🌐 Récupérer URL"
         id: prod-url
         run: |
           cd infra
           echo "PROD_URL=$(terraform output -raw service_url)" >> $GITHUB_OUTPUT
           cd ..
 
-      - name: "📧 Préparer le rapport final"
-        run: |
-          echo "# Rapport de déploiement" > final-report.md
-          echo "- Statut: ${{ job.status }}" >> final-report.md
-          echo "- Commit: ${{ github.sha }}" >> final-report.md
-          echo "- Date: $(date)" >> final-report.md
-          echo "- URL: ${{ steps.prod-url.outputs.PROD_URL }}" >> final-report.md
-          echo "## Détails Monitoring" >> final-report.md
-          cat monitoring/report.md >> final-report.md
-
-      - name: "📧 Envoyer notification"
+      - name: "📧 Envoyer email"
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
@@ -285,6 +276,9 @@ jobs:
           password: ${{ secrets.EMAIL_PASSWORD }}
           from: ${{ env.EMAIL_FROM }}
           to: ${{ env.YOUR_EMAIL }}
-          subject: "Rapport de déploiement - ${{ github.repository }}"
-          body: file://final-report.md
+          subject: "Déploiement ${{ github.sha }}"
+          body: |
+            Statut: ${{ job.status }}
+            URL: ${{ steps.prod-url.outputs.PROD_URL }}
+            Date: $(date)
           attachments: monitoring/report.md
