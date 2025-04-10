@@ -1,27 +1,3 @@
-# Variables d'entrée
-variable "docker_username" {
-  description = "Nom d'utilisateur Docker Hub"
-  type        = string
-}
-
-variable "db_password" {
-  description = "Mot de passe de la base de données"
-  type        = string
-  sensitive   = true
-}
-
-variable "image_tag" {
-  description = "Tag de l'image Docker"
-  type        = string
-  default     = "latest"
-}
-
-variable "replica_count" {
-  description = "Nombre de réplicas pour le déploiement"
-  type        = number
-  default     = 3
-}
-
 # 1. Création d'un namespace dédié
 resource "kubernetes_namespace" "microservice" {
   metadata {
@@ -36,7 +12,7 @@ resource "kubernetes_namespace" "microservice" {
 # 2. Déploiement de l'application
 resource "kubernetes_deployment" "app" {
   metadata {
-    name      = "gestion-trajet-deployment"  # Nom modifié pour cohérence
+    name      = "gestion-trajet-deployment"
     namespace = kubernetes_namespace.microservice.metadata[0].name
     
     labels = {
@@ -71,13 +47,13 @@ resource "kubernetes_deployment" "app" {
         annotations = {
           "prometheus.io/scrape" = "true"
           "prometheus.io/port"   = "80"
-          "prometheus.io/path"   = "/metrics"  # Ajouté pour la métrique
+          "prometheus.io/path"   = "/metrics"
         }
       }
 
       spec {
         container {
-          name  = "app-container"  # Nom simplifié
+          name  = "app-container"
           image = "${var.docker_username}/gestion-trajet:${var.image_tag}"
           
           port {
@@ -98,7 +74,7 @@ resource "kubernetes_deployment" "app" {
 
           liveness_probe {
             http_get {
-              path = "/healthz"  # Endpoint de santé standard
+              path = "/healthz"
               port = 80
             }
             initial_delay_seconds = 30
@@ -109,7 +85,7 @@ resource "kubernetes_deployment" "app" {
 
           readiness_probe {
             http_get {
-              path = "/ready"  # Endpoint de readiness
+              path = "/ready"
               port = 80
             }
             initial_delay_seconds = 5
@@ -133,14 +109,12 @@ resource "kubernetes_deployment" "app" {
             }
           }
 
-          # Ajout de variables d'environnement supplémentaires
           env {
             name  = "PORT"
             value = "80"
           }
         }
 
-        # Ajout de tolerations et nodeSelector pour le scheduling
         toleration {
           key      = "CriticalAddonsOnly"
           operator = "Exists"
@@ -148,7 +122,7 @@ resource "kubernetes_deployment" "app" {
         }
 
         node_selector = {
-          "kubernetes.io/arch" = "amd64"  # Spécification d'architecture
+          "kubernetes.io/arch" = "amd64"
         }
       }
     }
@@ -163,7 +137,7 @@ resource "kubernetes_service" "app" {
     
     annotations = {
       "metallb.universe.tf/address-pool" = "default"
-      "prometheus.io/scrape"             = "true"  # Pour le monitoring
+      "prometheus.io/scrape"             = "true"
     }
   }
 
@@ -191,9 +165,9 @@ resource "kubernetes_secret" "db_creds" {
   }
 
   data = {
-    db_host     = base64encode("postgres-service.microservice.svc.cluster.local")  # FQDN complet
+    db_host     = base64encode("postgres-service.microservice.svc.cluster.local")
     db_password = base64encode(var.db_password)
-    db_user     = base64encode("app_user")  # Ajout d'un utilisateur par défaut
+    db_user     = base64encode("app_user")
   }
 
   type = "Opaque"
@@ -226,7 +200,7 @@ resource "kubernetes_horizontal_pod_autoscaler" "app" {
     name      = "gestion-trajet-hpa"
     namespace = kubernetes_namespace.microservice.metadata[0].name
     labels = {
-      app = "gestion-trajet"  # Ajout de labels pour cohérence
+      app = "gestion-trajet"
     }
   }
 
@@ -241,17 +215,4 @@ resource "kubernetes_horizontal_pod_autoscaler" "app" {
       name        = kubernetes_deployment.app.metadata[0].name
     }
   }
-}
-
-# 7. Sorties utiles
-output "service_url" {
-  value = "http://${kubernetes_service.app.status.0.load_balancer.0.ingress.0.ip}:80"
-}
-
-output "deployment_name" {
-  value = kubernetes_deployment.app.metadata[0].name
-}
-
-output "namespace" {
-  value = kubernetes_namespace.microservice.metadata[0].name
 }
