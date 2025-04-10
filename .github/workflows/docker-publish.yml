@@ -28,10 +28,12 @@ jobs:
           sudo apt-get install -y yamllint
           yamllint k8s/*.yaml || true
 
-      - name: Dry-run Kubernetes manifests
+      - name: Install kubectl
         uses: azure/setup-kubectl@v3
         with:
           version: 'v1.26.5'
+
+      - name: Dry-run Kubernetes manifests
         run: |
           kubectl apply -f k8s/ --dry-run=server -n ${{ env.NAMESPACE }}
 
@@ -89,13 +91,11 @@ jobs:
         run: |
           kubectl create namespace ${{ env.NAMESPACE }} || true
           
-          # Appliquer les configurations dans le bon ordre
           kubectl apply -f k8s/configmap.yaml -n ${{ env.NAMESPACE }}
           kubectl apply -f k8s/secret.yaml -n ${{ env.NAMESPACE }}
           kubectl apply -f k8s/deployment.yaml -n ${{ env.NAMESPACE }}
           kubectl apply -f k8s/service.yaml -n ${{ env.NAMESPACE }}
 
-          # Attendre le déploiement
           kubectl rollout status deployment/${{ env.APP_NAME }} -n ${{ env.NAMESPACE }} --timeout=300s
 
       - name: Verify deployment
@@ -103,7 +103,6 @@ jobs:
           kubectl get all -n ${{ env.NAMESPACE }}
           kubectl describe deployment/${{ env.APP_NAME }} -n ${{ env.NAMESPACE }}
           
-          # Test d'accès via port-forward
           kubectl port-forward svc/${{ env.APP_NAME }}-service ${{ env.SERVICE_PORT }}:${{ env.CONTAINER_PORT }} -n ${{ env.NAMESPACE }} &
           sleep 5
           curl -v http://localhost:${{ env.SERVICE_PORT }}/healthz
@@ -133,8 +132,3 @@ jobs:
         run: |
           kubectl delete -f k8s/ -n ${{ env.NAMESPACE }} --ignore-not-found || true
           sudo /usr/local/bin/k3s-uninstall.sh || true
-
-      - name: Cleanup Docker cache
-        uses: docker/build-push-action@v4
-        with:
-          cleanup: true
