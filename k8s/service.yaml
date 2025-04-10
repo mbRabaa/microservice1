@@ -2,11 +2,12 @@ apiVersion: v1
 kind: Service
 metadata:
   name: gestion-trajet-service
+  namespace: microservice
 spec:
+  type: LoadBalancer
+  ports:
+    - port: 80
+      targetPort: 8080  
+      nodePort: 31000   # Optionnel - seulement si vous voulez un port spécifique
   selector:
     app: gestion-trajet
-  ports:
-    - protocol: TCP
-      port: 80
-      targetPort: 3000
-  type: LoadBalancer

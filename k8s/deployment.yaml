@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: gestion-trajet
+  namespace: microservice
 spec:
   replicas: 3
   selector:
@@ -12,9 +13,16 @@ spec:
       labels:
         app: gestion-trajet
     spec:
+      imagePullSecrets:
+      - name: local-image-pull
       containers:
-        - name: gestion-trajet
-          image: mbrabaa2023/gestion_trajet:latest
-          imagePullPolicy: IfNotPresent
-          ports:
-            - containerPort: 80
+      - name: app
+        image: mbrabaa2023/gestion_trajet:latest
+        imagePullPolicy: IfNotPresent  # Modifié
+        ports:
+        - containerPort: 8080
+        envFrom:
+        - secretRef:
+            name: gestion-trajet-secrets
+        - configMapRef:
+            name: gestion-trajet-config

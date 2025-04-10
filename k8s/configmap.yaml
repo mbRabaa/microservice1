@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gestion-trajet-config
+  namespace: microservice
+data:
+  APP_ENV: "production"
