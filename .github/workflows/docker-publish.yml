@@ -1,4 +1,4 @@
-name: CI/CD - Pipeline DevOps avec Terraform
+name: CI/CD - Pipeline DevOps avec Terraform et Kubernetes
 
 on:
   push:
@@ -13,12 +13,15 @@ env:
   NAMESPACE: microservice
   DOCKER_REGISTRY: docker.io
   NODE_VERSION: 20
+  APP_NAME: gestion-trajet
+  SERVICE_PORT: 80
+  CONTAINER_PORT: 8080
   
   # Configuration Monitoring
   PROMETHEUS_PORT: 9090
   GRAFANA_PORT: 3000
   GRAFANA_ADMIN_PASSWORD: rabaa123
-  GRAFANA_VERSION: 9.5.3  # Version plus stable
+  GRAFANA_VERSION: 9.5.3
   
   # Configuration Email
   YOUR_EMAIL: elmbarkirabea@gmail.com
@@ -142,6 +145,26 @@ jobs:
           sudo cp /etc/rancher/k3s/k3s.yaml $HOME/.kube/config
           sudo chown $(id -u):$(id -g) $HOME/.kube/config
 
+      - name: "🚀 Déployer sur Kubernetes"
+        run: |
+          kubectl create namespace ${{ env.NAMESPACE }} || true
+          
+          kubectl apply -f k8s/configmap.yaml -n ${{ env.NAMESPACE }}
+          kubectl apply -f k8s/secret.yaml -n ${{ env.NAMESPACE }}
+          kubectl apply -f k8s/deployment.yaml -n ${{ env.NAMESPACE }}
+          kubectl apply -f k8s/service.yaml -n ${{ env.NAMESPACE }}
+
+          kubectl rollout status deployment/${{ env.APP_NAME }} -n ${{ env.NAMESPACE }} --timeout=300s
+
+      - name: "🔍 Vérifier le déploiement"
+        run: |
+          kubectl get all -n ${{ env.NAMESPACE }}
+          kubectl describe deployment/${{ env.APP_NAME }} -n ${{ env.NAMESPACE }}
+          
+          kubectl port-forward svc/${{ env.APP_NAME }}-service ${{ env.SERVICE_PORT }}:${{ env.CONTAINER_PORT }} -n ${{ env.NAMESPACE }} &
+          sleep 5
+          curl -v http://localhost:${{ env.SERVICE_PORT }}/healthz
+
       - name: "⚙️ Installer Terraform"
         uses: hashicorp/setup-terraform@v2
         with:
@@ -158,42 +181,38 @@ jobs:
           terraform validate
           terraform apply -auto-approve
 
-      - name: "🔍 Vérifier le déploiement"
-        run: |
-          kubectl get pods,svc,deploy -n ${{ env.NAMESPACE }}
-          echo "Service URL: $(terraform -chdir=infra output -raw service_url)"
-
-
-      - name: 🔄 Rollback basique
+      - name: "🔄 Rollback basique"
         if: failure()
         run: |
-            kubectl rollout undo deployment/bibliom1 -n bibliotheque || true
-            exit 1
-            - name: "📧 Notification d'échec"
-            if: failure() && steps.verify-deployment.conclusion == 'failure'
-            uses: dawidd6/action-send-mail@v3
-            with:
-              server_address: smtp.gmail.com
-              server_port: 465
-              username: ${{ secrets.EMAIL_USERNAME }}
-              password: ${{ secrets.EMAIL_PASSWORD }}
-              from: ${{ env.EMAIL_FROM }}
-              to: ${{ env.YOUR_EMAIL }}
-              subject: "ÉCHEC Déploiement - ${{ github.repository }}"
-              body: |
-                Le déploiement a échoué et un rollback a été effectué.
-                
-                Détails:
-                - Commit: ${{ github.sha }}
-                - Statut: Échec
-                - Date: $(date)
-                
-                Consultez les logs pour plus d'informations.
+          kubectl rollout undo deployment/${{ env.APP_NAME }} -n ${{ env.NAMESPACE }} || true
+          exit 1
+
+      - name: "📧 Notification d'échec"
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          from: ${{ env.EMAIL_FROM }}
+          to: ${{ env.YOUR_EMAIL }}
+          subject: "ÉCHEC Déploiement - ${{ github.repository }}"
+          body: |
+            Le déploiement a échoué et un rollback a été effectué.
+            
+            Détails:
+            - Commit: ${{ github.sha }}
+            - Statut: Échec
+            - Date: $(date)
+            
+            Consultez les logs pour plus d'informations.
+
   monitoring-deploy:
     name: "4. Déploiement Monitoring"
     needs: docker-deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 30  # Augmentation du timeout global
+    timeout-minutes: 30
     
     steps:
       - name: "🛎️ Checkout du code"
@@ -211,12 +230,12 @@ jobs:
           docker-compose down -v --remove-orphans || true
           sudo rm -rf grafana-storage || true
           mkdir -p grafana-storage
-          chmod -R 777 grafana-storage  # Assure les permissions
+          chmod -R 777 grafana-storage
 
       - name: "🚀 Démarrer les services"
         working-directory: ./monitoring
         env:
-          GF_INSTALL_PLUGINS: ""  # Désactive les plugins par défaut
+          GF_INSTALL_PLUGINS: ""
         run: |
           docker-compose up -d
           echo "Attente initiale (30s) pour l'initialisation..."
@@ -233,34 +252,25 @@ jobs:
           fi
           echo "✅ Tous les services sont en cours d'exécution"
 
-      - name: "⏳ Attendre Grafana (version améliorée)"
+      - name: "⏳ Attendre Grafana"
         working-directory: ./monitoring
         run: |
           echo "Attente du démarrage de Grafana..."
           start_time=$(date +%s)
-          timeout=1200  # 20 minutes
+          timeout=1200
           
           while :; do
-            # Vérifier si le conteneur est en cours d'exécution
             if ! docker-compose ps | grep grafana | grep -q "Up"; then
               echo "❌ Le conteneur Grafana s'est arrêté"
               docker-compose logs grafana
               exit 1
             fi
             
-            # Vérifier la santé via l'API
             if curl -s http://localhost:3000/api/health | grep -q "\"database\":\"ok\""; then
               echo "✅ Grafana prêt après $(($(date +%s) - start_time)) secondes"
               break
             fi
             
-            # Vérifier aussi le endpoint de login
-            if curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/login | grep -q 200; then
-              echo "✅ Grafana login page accessible après $(($(date +%s) - start_time)) secondes"
-              break
-            fi
-            
-            # Timeout
             if [ $(($(date +%s) - start_time)) -ge $timeout ]; then
               echo "❌ Timeout - Grafana n'a pas démarré après 20 minutes"
               docker-compose logs grafana
@@ -312,6 +322,3 @@ jobs:
           curl -s http://localhost:9113/metrics | head -n 20 >> report.md
           echo "## Targets Prometheus" >> report.md
           curl -s http://localhost:9090/api/v1/targets | jq . >> report.md
-
-  
-
