@@ -1,4 +1,4 @@
-name: CI/CD - Pipeline DevOps avec Terraform et Kubernetes
+name: CI/CD - Pipeline DevOps avec Terraform et Kubernetes + monitoring + Rollback+ Notification
 
 on:
   push:
