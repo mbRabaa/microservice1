@@ -1,134 +1,317 @@
-name: CI/CD - Pipeline DevOps avec Kubernetes
+name: CI/CD - Pipeline DevOps avec Terraform
 
 on:
   push:
     branches:
       - main
-  pull_request:
-    branches:
-      - main
 
 env:
+  # Configuration de base
+  SONAR_HOST_URL: http://localhost:9000
   K3S_VERSION: v1.26.5+k3s1
+  TERRAFORM_VERSION: 1.5.5
   NAMESPACE: microservice
   DOCKER_REGISTRY: docker.io
-  APP_NAME: gestion-trajet
-  SERVICE_PORT: 80
-  CONTAINER_PORT: 8080
+  NODE_VERSION: 20
+  
+  # Configuration Monitoring
+  PROMETHEUS_PORT: 9090
+  GRAFANA_PORT: 3000
+  GRAFANA_ADMIN_PASSWORD: rabaa123
+  GRAFANA_VERSION: 9.5.3  # Version plus stable
+  
+  # Configuration Email
+  YOUR_EMAIL: elmbarkirabea@gmail.com
+  EMAIL_FROM: "GitHub Actions <actions@github.com>"
 
 jobs:
-  validate-k8s:
-    name: "1. Validation Kubernetes"
+  setup-and-test:
+    name: "1. Installation et Tests"
     runs-on: ubuntu-latest
+    
     steps:
-      - uses: actions/checkout@v4
+      - name: "🛎️ Checkout du code"
+        uses: actions/checkout@v4.1.1
 
-      - name: Validate YAML syntax
-        run: |
-          sudo apt-get install -y yamllint
-          yamllint k8s/*.yaml || true
-
-      - name: Install kubectl
-        uses: azure/setup-kubectl@v3
+      - name: "⎔ Configurer Node.js"
+        uses: actions/setup-node@v3
         with:
-          version: 'v1.26.5'
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
 
-      - name: Dry-run Kubernetes manifests
-        run: |
-          kubectl apply -f k8s/ --dry-run=server -n ${{ env.NAMESPACE }}
+      - name: "📦 Installer les dépendances"
+        run: npm ci
 
-      - name: Check for sensitive data
-        run: |
-          if grep -q -E 'password|secret|token' k8s/secret.yaml; then
-            echo "::error::Potential sensitive data found in secret.yaml"
-            exit 1
-          fi
+      - name: "🧪 Tests Unitaires"
+        run: npm run test:unit
+        env:
+          NODE_ENV: test
 
-  build-and-push:
-    name: "2. Build et Push Docker"
-    needs: validate-k8s
+      - name: "🔗 Tests d'Intégration"
+        run: npm run test:integration
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: testuser
+          DB_PASSWORD: testpass
+          NODE_ENV: test
+
+      - name: "🛠️ Build de l'application"
+        run: npm run build
+
+  sonarqube-analysis:
+    name: "2. Analyse SonarQube"
+    needs: setup-and-test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
     steps:
-      - uses: actions/checkout@v4
+      - name: "🛎️ Checkout du code"
+        uses: actions/checkout@v4.1.1
+        with:
+          fetch-depth: 0
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@v2
+      - name: "🐳 Démarrer SonarQube"
+        run: |
+          docker run -d \
+            --name sonarqube \
+            -p 9000:9000 \
+            -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true \
+            sonarqube:9.9.1-community
+          timeout 300 bash -c 'while ! curl -sSf ${{ env.SONAR_HOST_URL }}/api/system/status | grep -q "\"status\":\"UP\""; do
+            sleep 10
+            echo "En attente du démarrage..."
+          done'
+
+      - name: "🔑 Générer token SonarQube"
+        run: |
+          SONAR_TOKEN=$(curl -sS -u admin:admin \
+            -X POST "${{ env.SONAR_HOST_URL }}/api/user_tokens/generate" \
+            -d "name=github-action-$(date +%s)" \
+            | jq -r '.token')
+          echo "SONAR_TOKEN=$SONAR_TOKEN" >> $GITHUB_ENV
+          echo "::add-mask::$SONAR_TOKEN"
+
+      - name: "🔍 Exécuter analyse SonarQube"
+        uses: SonarSource/sonarqube-scan-action@v4
+        env:
+          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
+        with:
+          args: >
+            -Dsonar.projectKey=gestion-trajet-app
+            -Dsonar.sources=src
+            -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
+
+      - name: "🧹 Nettoyer SonarQube"
+        if: always()
+        run: docker rm -f sonarqube || true
+
+  docker-deploy:
+    name: "3. Déploiement Docker et Kubernetes"
+    needs: sonarqube-analysis
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: "🛎️ Checkout du code"
+        uses: actions/checkout@v4.1.1
+
+      - name: "🔐 Login Docker Hub"
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
 
-      - name: Build and push
+      - name: "🏗️ Build Docker"
         uses: docker/build-push-action@v4
         with:
           context: .
           push: true
           tags: |
-            ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.APP_NAME }}:${{ github.sha }}
-            ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.APP_NAME }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/gestion-trajet:${{ github.sha }}
+            ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/gestion-trajet:latest
 
-  deploy-k8s:
-    name: "3. Déploiement Kubernetes"
-    needs: build-and-push
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install K3s
+      - name: "🖥️ Installer K3s"
         run: |
           curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=${{ env.K3S_VERSION }} sh -
           sudo chmod 644 /etc/rancher/k3s/k3s.yaml
 
-      - name: Configure kubectl
+      - name: "⚙️ Configurer kubectl"
         run: |
           mkdir -p $HOME/.kube
           sudo cp /etc/rancher/k3s/k3s.yaml $HOME/.kube/config
           sudo chown $(id -u):$(id -g) $HOME/.kube/config
-          echo "KUBECONFIG=$HOME/.kube/config" >> $GITHUB_ENV
 
-      - name: Deploy to Kubernetes
+      - name: "⚙️ Installer Terraform"
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: "🚀 Déployer avec Terraform"
+        working-directory: ./infra
+        env:
+          TF_VAR_docker_username: ${{ secrets.DOCKER_USERNAME }}
+          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+          TF_VAR_image_tag: ${{ github.sha }}
         run: |
-          kubectl create namespace ${{ env.NAMESPACE }} || true
-          
-          kubectl apply -f k8s/configmap.yaml -n ${{ env.NAMESPACE }}
-          kubectl apply -f k8s/secret.yaml -n ${{ env.NAMESPACE }}
-          kubectl apply -f k8s/deployment.yaml -n ${{ env.NAMESPACE }}
-          kubectl apply -f k8s/service.yaml -n ${{ env.NAMESPACE }}
+          terraform init
+          terraform validate
+          terraform apply -auto-approve
 
-          kubectl rollout status deployment/${{ env.APP_NAME }} -n ${{ env.NAMESPACE }} --timeout=300s
-
-      - name: Verify deployment
+      - name: "🔍 Vérifier le déploiement"
         run: |
-          kubectl get all -n ${{ env.NAMESPACE }}
-          kubectl describe deployment/${{ env.APP_NAME }} -n ${{ env.NAMESPACE }}
-          
-          kubectl port-forward svc/${{ env.APP_NAME }}-service ${{ env.SERVICE_PORT }}:${{ env.CONTAINER_PORT }} -n ${{ env.NAMESPACE }} &
-          sleep 5
-          curl -v http://localhost:${{ env.SERVICE_PORT }}/healthz
+          kubectl get pods,svc,deploy -n ${{ env.NAMESPACE }}
+          echo "Service URL: $(terraform -chdir=infra output -raw service_url)"
 
-  integration-tests:
-    name: "4. Tests d'Intégration"
-    needs: deploy-k8s
+
+      - name: 🔄 Rollback basique
+        if: failure()
+        run: |
+            kubectl rollout undo deployment/bibliom1 -n bibliotheque || true
+            exit 1
+            - name: "📧 Notification d'échec"
+            if: failure() && steps.verify-deployment.conclusion == 'failure'
+            uses: dawidd6/action-send-mail@v3
+            with:
+              server_address: smtp.gmail.com
+              server_port: 465
+              username: ${{ secrets.EMAIL_USERNAME }}
+              password: ${{ secrets.EMAIL_PASSWORD }}
+              from: ${{ env.EMAIL_FROM }}
+              to: ${{ env.YOUR_EMAIL }}
+              subject: "ÉCHEC Déploiement - ${{ github.repository }}"
+              body: |
+                Le déploiement a échoué et un rollback a été effectué.
+                
+                Détails:
+                - Commit: ${{ github.sha }}
+                - Statut: Échec
+                - Date: $(date)
+                
+                Consultez les logs pour plus d'informations.
+  monitoring-deploy:
+    name: "4. Déploiement Monitoring"
+    needs: docker-deploy
     runs-on: ubuntu-latest
+    timeout-minutes: 30  # Augmentation du timeout global
+    
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Run integration tests
+      - name: "🛎️ Checkout du code"
+        uses: actions/checkout@v4.1.1
+    
+      - name: "📦 Installer Docker Compose"
         run: |
-          SERVICE_IP=$(kubectl get svc ${{ env.APP_NAME }}-service -n ${{ env.NAMESPACE }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-          curl -sSf "http://$SERVICE_IP:${{ env.SERVICE_PORT }}/api/health" | jq -e '.status == "OK"'
-          curl -sSf "http://$SERVICE_IP:${{ env.SERVICE_PORT }}/api/ready" | jq -e '.ready == true'
-
-  cleanup:
-    name: "5. Nettoyage"
-    if: always()
-    needs: integration-tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Cleanup Kubernetes resources
+          sudo curl -L "https://github.com/docker/compose/releases/download/v2.23.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          sudo chmod +x /usr/local/bin/docker-compose
+          docker-compose --version
+    
+      - name: "🧹 Nettoyer l'environnement"
+        working-directory: ./monitoring
         run: |
-          kubectl delete -f k8s/ -n ${{ env.NAMESPACE }} --ignore-not-found || true
-          sudo /usr/local/bin/k3s-uninstall.sh || true
+          docker-compose down -v --remove-orphans || true
+          sudo rm -rf grafana-storage || true
+          mkdir -p grafana-storage
+          chmod -R 777 grafana-storage  # Assure les permissions
+
+      - name: "🚀 Démarrer les services"
+        working-directory: ./monitoring
+        env:
+          GF_INSTALL_PLUGINS: ""  # Désactive les plugins par défaut
+        run: |
+          docker-compose up -d
+          echo "Attente initiale (30s) pour l'initialisation..."
+          sleep 30
+
+      - name: "🔍 Vérifier l'état des conteneurs"
+        working-directory: ./monitoring
+        run: |
+          if docker-compose ps | grep -v "Up" | grep -q -v "STATUS"; then
+            echo "❌ Certains services ne sont pas démarrés:"
+            docker-compose ps
+            docker-compose logs
+            exit 1
+          fi
+          echo "✅ Tous les services sont en cours d'exécution"
+
+      - name: "⏳ Attendre Grafana (version améliorée)"
+        working-directory: ./monitoring
+        run: |
+          echo "Attente du démarrage de Grafana..."
+          start_time=$(date +%s)
+          timeout=1200  # 20 minutes
+          
+          while :; do
+            # Vérifier si le conteneur est en cours d'exécution
+            if ! docker-compose ps | grep grafana | grep -q "Up"; then
+              echo "❌ Le conteneur Grafana s'est arrêté"
+              docker-compose logs grafana
+              exit 1
+            fi
+            
+            # Vérifier la santé via l'API
+            if curl -s http://localhost:3000/api/health | grep -q "\"database\":\"ok\""; then
+              echo "✅ Grafana prêt après $(($(date +%s) - start_time)) secondes"
+              break
+            fi
+            
+            # Vérifier aussi le endpoint de login
+            if curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/login | grep -q 200; then
+              echo "✅ Grafana login page accessible après $(($(date +%s) - start_time)) secondes"
+              break
+            fi
+            
+            # Timeout
+            if [ $(($(date +%s) - start_time)) -ge $timeout ]; then
+              echo "❌ Timeout - Grafana n'a pas démarré après 20 minutes"
+              docker-compose logs grafana
+              exit 1
+            fi
+            
+            echo "En attente... ($(($(date +%s) - start_time))s)"
+            sleep 10
+          done
+
+      - name: "📈 Configurer Grafana"
+        working-directory: ./monitoring
+        run: |
+          echo "Configuration de la source de données..."
+          for attempt in {1..5}; do
+            response=$(curl -s -o /dev/null -w "%{http_code}" \
+              -X POST "http://localhost:3000/api/datasources" \
+              -H "Content-Type: application/json" \
+              -u "admin:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
+              -d '{
+                "name":"Prometheus",
+                "type":"prometheus",
+                "url":"http://prometheus:9090",
+                "access":"proxy",
+                "basicAuth":false
+              }')
+            
+            if [ "$response" -eq 200 ]; then
+              echo "✅ Configuration réussie"
+              exit 0
+            elif [ "$response" -eq 409 ]; then
+              echo "ℹ️ La source existe déjà"
+              exit 0
+            else
+              echo "⚠️ Échec tentative $attempt (HTTP $response)"
+              sleep 15
+            fi
+          done
+          echo "❌ Échec après 5 tentatives"
+          exit 1
+
+      - name: "📝 Générer rapport"
+        working-directory: ./monitoring
+        run: |
+          echo "# Rapport de Monitoring" > report.md
+          echo "## État des services" >> report.md
+          docker-compose ps >> report.md
+          echo "## Métriques NGINX" >> report.md
+          curl -s http://localhost:9113/metrics | head -n 20 >> report.md
+          echo "## Targets Prometheus" >> report.md
+          curl -s http://localhost:9090/api/v1/targets | jq . >> report.md
+
+  
+
