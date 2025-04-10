@@ -1,4 +1,5 @@
-name: CI/CD - Pipeline DevOps avec Terraform et Kubernetes + monitoring + Rollback
+name: CI/CD - Pipeline DevOps avec Terraform et Kubernetes + monitoring + Rollback+ Notification
+
 on:
   push:
     branches:
@@ -13,9 +14,10 @@ env:
   DOCKER_REGISTRY: docker.io
   NODE_VERSION: 20
   APP_NAME: gestion-trajet
-  DEPLOYMENT_NAME: gestion-trajet-deployment  # Nouvelle variable pour cohérence
+  DEPLOYMENT_NAME: microservice1-deployment  # Corrigé pour correspondre à main.tf
+  SERVICE_NAME: gestion-trajet-service       # Corrigé pour correspondre à main.tf
   SERVICE_PORT: 80
-  CONTAINER_PORT: 8080
+  CONTAINER_PORT: 80                         # Corrigé pour correspondre à main.tf
   
   # Configuration Monitoring
   PROMETHEUS_PORT: 9090
@@ -149,7 +151,7 @@ jobs:
         run: |
           # Supprimer les ressources existantes mais conserver le namespace
           kubectl delete deployment ${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }} --ignore-not-found=true
-          kubectl delete service ${{ env.APP_NAME }}-service -n ${{ env.NAMESPACE }} --ignore-not-found=true
+          kubectl delete service ${{ env.SERVICE_NAME }} -n ${{ env.NAMESPACE }} --ignore-not-found=true
           kubectl delete configmap app-config -n ${{ env.NAMESPACE }} --ignore-not-found=true
           kubectl delete secret database-credentials -n ${{ env.NAMESPACE }} --ignore-not-found=true
 
@@ -164,15 +166,10 @@ jobs:
           TF_VAR_docker_username: ${{ secrets.DOCKER_USERNAME }}
           TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
           TF_VAR_image_tag: ${{ github.sha }}
-          TF_VAR_app_name: ${{ env.APP_NAME }}
-          TF_VAR_deployment_name: ${{ env.DEPLOYMENT_NAME }}
         run: |
           terraform init
           terraform validate
-          
-          # Importer le namespace s'il existe déjà
           terraform import kubernetes_namespace.microservice ${{ env.NAMESPACE }} || true
-          
           terraform apply -auto-approve
 
       - name: "🔍 Vérifier le déploiement"
@@ -185,14 +182,15 @@ jobs:
           
           echo "=== Test de connectivité ==="
           # Configuration du port-forward temporaire pour les tests
-          timeout 60 kubectl port-forward svc/${{ env.APP_NAME }}-service ${{ env.SERVICE_PORT }}:${{ env.CONTAINER_PORT }} -n ${{ env.NAMESPACE }} >/dev/null 2>&1 &
-          sleep 10  # Augmentation du délai d'attente
+          timeout 60 kubectl port-forward svc/${{ env.SERVICE_NAME }} ${{ env.SERVICE_PORT }}:${{ env.CONTAINER_PORT }} -n ${{ env.NAMESPACE }} >/dev/null 2>&1 &
+          sleep 10
           
-          if curl -v http://localhost:${{ env.SERVICE_PORT }}/healthz; then
+          if curl -sSf http://localhost:${{ env.SERVICE_PORT }}; then
             echo "✅ Test de santé réussi"
           else
-            echo "⚠️ Le test de santé a échoué mais le déploiement continue"
-            kubectl logs deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }} --tail=50 || true
+            echo "⚠️ Le test de santé a échoué"
+            kubectl logs -l app=${{ env.APP_NAME }} -n ${{ env.NAMESPACE }} --tail=50
+            exit 1
           fi
 
       - name: "🔄 Rollback basique"
