@@ -1,4 +1,3 @@
-
 # 1. Namespace dédié
 resource "kubernetes_namespace" "microservice" {
   metadata {
@@ -24,6 +23,7 @@ resource "kubernetes_config_map" "app_config" {
       server:
         port: 8080
         health_check_path: /health
+        readiness_path: /ready
     EOT
   }
 }
@@ -44,7 +44,7 @@ resource "kubernetes_secret" "db_creds" {
   type = "Opaque"
 }
 
-# 4. Déploiement principal
+# 4. Déploiement principal (version optimisée)
 resource "kubernetes_deployment" "app" {
   metadata {
     name      = "gestion-trajet-deployment"
@@ -89,10 +89,16 @@ resource "kubernetes_deployment" "app" {
         container {
           name  = "app-container"
           image = "${var.docker_username}/gestion-trajet:${var.image_tag}"
+          image_pull_policy = "IfNotPresent"
           
           port {
             name           = "http"
             container_port = 8080
+          }
+
+          env {
+            name  = "PORT"
+            value = "8080"
           }
 
           env_from {
@@ -123,25 +129,32 @@ resource "kubernetes_deployment" "app" {
               path = "/health"
               port = 8080
             }
-            initial_delay_seconds = 30
+            initial_delay_seconds = 45  # Augmenté pour les applications lentes
             period_seconds        = 10
+            failure_threshold     = 3
           }
 
           readiness_probe {
             http_get {
-              path = "/health"
+              path = "/ready"  # Endpoint distinct pour readiness
               port = 8080
             }
             initial_delay_seconds = 5
             period_seconds        = 5
+            success_threshold     = 1
+            failure_threshold     = 3
+          }
+
+          startup_probe {
+            http_get {
+              path = "/health"
+              port = 8080
+            }
+            failure_threshold = 30  # 30 tentatives
+            period_seconds    = 5   # Intervalle de 5s
           }
         }
       }
-    }
-
-    timeouts {
-      create = "20m"
-      update = "20m"
     }
   }
 }
@@ -165,13 +178,14 @@ resource "kubernetes_service" "app" {
       name        = "http"
       port        = 80
       target_port = 8080
+      protocol    = "TCP"
     }
 
     type = "LoadBalancer"
   }
 }
 
-# 6. Autoscaling Horizontal
+# 6. Autoscaling Horizontal (optionnel)
 resource "kubernetes_horizontal_pod_autoscaler" "app" {
   metadata {
     name      = "gestion-trajet-hpa"
