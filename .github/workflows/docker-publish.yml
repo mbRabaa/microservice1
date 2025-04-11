@@ -1,86 +1,99 @@
-name: CI/CD - Pipeline DevOps avec Terraform et Kubernetes
+name: CI/CD - Pipeline DevOps avec Terraform et Kubernetes +monitoring 
+# Nom de votre workflow qui apparaîtra dans l'interface GitHub Actions
 
 on:
   push:
     branches:
       - main
+# Déclenche le workflow à chaque push sur la branche main
 
 env:
+  # Section des variables d'environnement globales
   # Configuration Kubernetes
-  K3S_VERSION: v1.26.5+k3s1
-  NAMESPACE: microservice
-  DOCKER_REGISTRY: docker.io
+  K3S_VERSION: v1.26.5+k3s1  # Version de K3s à installer
+  NAMESPACE: microservice     # Namespace Kubernetes à utiliser
+  DOCKER_REGISTRY: docker.io  # Registry Docker utilisée
   
   # Configuration Application
-  APP_NAME: gestion-trajet
-  DEPLOYMENT_NAME: gestion-trajet-deployment
-  SERVICE_NAME: gestion-trajet-service
-  CONTAINER_PORT: 80
-  SERVICE_PORT: 80
+  APP_NAME: gestion-trajet            # Nom de l'application
+  DEPLOYMENT_NAME: gestion-trajet-deployment  # Nom du déploiement Kubernetes
+  SERVICE_NAME: gestion-trajet-service        # Nom du service Kubernetes
+  CONTAINER_PORT: 80                 # Port exposé par le container
+  SERVICE_PORT: 80                   # Port exposé par le service
   
   # Configuration Terraform
-  TERRAFORM_VERSION: 1.5.5
-  TF_VAR_replica_count: 3
+  TERRAFORM_VERSION: 1.5.5           # Version de Terraform à utiliser
+  TF_VAR_replica_count: 3            # Nombre de réplicas pour le déploiement
   
   # Configuration Monitoring
-  PROMETHEUS_PORT: 9090
-  GRAFANA_PORT: 3000
-  GRAFANA_ADMIN_PASSWORD: rabaa123
+  PROMETHEUS_PORT: 9090      # Port pour Prometheus
+  GRAFANA_PORT: 3000         # Port pour Grafana
+  GRAFANA_ADMIN_PASSWORD: rabaa123  # Mot de passe admin Grafana
   
   # Configuration SonarQube
-  SONAR_HOST_URL: http://localhost:9000
+  SONAR_HOST_URL: http://localhost:9000  # URL pour SonarQube
   
   # Configuration Email
-  YOUR_EMAIL: elmbarkirabea@gmail.com
-  EMAIL_FROM: "GitHub Actions <actions@github.com>"
+  YOUR_EMAIL: elmbarkirabea@gmail.com    # Email pour les notifications
+  EMAIL_FROM: "GitHub Actions <actions@github.com>"  # Expéditeur des emails
 
 jobs:
+  # Premier job : Installation et tests
   setup-and-test:
     name: "1. Installation et Tests"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest  # Exécuté sur une machine Ubuntu
     
     steps:
+      # Étape 1: Récupération du code source
       - name: "🛎️ Checkout du code"
-        uses: actions/checkout@v4.1.1
+        uses: actions/checkout@v4.1.1  # Action officielle pour checkout le code
 
+      # Étape 2: Configuration de Node.js
       - name: "⎔ Configurer Node.js"
         uses: actions/setup-node@v3
         with:
-          node-version: 20
-          cache: 'npm'
+          node-version: 20  # Version de Node.js
+          cache: 'npm'      # Active le cache npm pour accélérer les builds
 
+      # Étape 3: Installation des dépendances
       - name: "📦 Installer les dépendances"
-        run: npm ci
+        run: npm ci  # Installation précise des dépendances (comme package-lock.json)
 
+      # Étape 4: Exécution des tests unitaires
       - name: "🧪 Tests Unitaires"
         run: npm run test:unit
         env:
-          NODE_ENV: test
+          NODE_ENV: test  # Définit l'environnement comme "test"
 
+      # Étape 5: Exécution des tests d'intégration
       - name: "🔗 Tests d'Intégration"
         run: npm run test:integration
         env:
-          DB_HOST: localhost
+          DB_HOST: localhost  # Configuration de la base de données de test
           DB_PORT: 5432
           DB_USER: testuser
           DB_PASSWORD: testpass
           NODE_ENV: test
 
+      # Étape 6: Build de l'application
       - name: "🛠️ Build de l'application"
-        run: npm run build
+        run: npm run build  # Compilation de l'application
 
+  # Deuxième job : Analyse de code avec SonarQube
   sonarqube-analysis:
     name: "2. Analyse SonarQube"
-    needs: setup-and-test
+    needs: setup-and-test  # Dépend du job setup-and-test
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 30  # Timeout après 30 minutes
     
     steps:
+      # Étape 1: Checkout du code
       - name: "🛎️ Checkout du code"
         uses: actions/checkout@v4.1.1
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # Récupère tout l'historique git (nécessaire pour SonarQube)
 
+      # Étape 2: Démarrage du conteneur SonarQube
       - name: "🐳 Démarrer SonarQube"
         run: |
           docker run -d \
@@ -88,11 +101,13 @@ jobs:
             -p 9000:9000 \
             -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true \
             sonarqube:9.9.1-community
+          # Attente que SonarQube soit prêt
           timeout 300 bash -c 'while ! curl -sSf ${{ env.SONAR_HOST_URL }}/api/system/status | grep -q "\"status\":\"UP\""; do
             sleep 10
             echo "En attente du démarrage..."
           done'
 
+      # Étape 3: Génération du token SonarQube
       - name: "🔑 Générer token SonarQube"
         run: |
           SONAR_TOKEN=$(curl -sS -u admin:admin \
@@ -100,8 +115,9 @@ jobs:
             -d "name=github-action-$(date +%s)" \
             | jq -r '.token')
           echo "SONAR_TOKEN=$SONAR_TOKEN" >> $GITHUB_ENV
-          echo "::add-mask::$SONAR_TOKEN"
+          echo "::add-mask::$SONAR_TOKEN"  # Masque le token dans les logs
 
+      # Étape 4: Exécution de l'analyse SonarQube
       - name: "🔍 Exécuter analyse SonarQube"
         uses: SonarSource/sonarqube-scan-action@v4
         env:
@@ -113,81 +129,96 @@ jobs:
             -Dsonar.sources=src
             -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
 
+      # Étape 5: Nettoyage (toujours exécutée même en cas d'échec)
       - name: "🧹 Nettoyer SonarQube"
         if: always()
-        run: docker rm -f sonarqube || true
+        run: docker rm -f sonarqube || true  # Supprime le conteneur SonarQube
 
+  # Troisième job : Déploiement Docker et Kubernetes
   docker-deploy:
     name: "3. Déploiement Docker et Kubernetes"
-    needs: sonarqube-analysis
+    needs: sonarqube-analysis  # Dépend du job sonarqube-analysis
     runs-on: ubuntu-latest
     
     steps:
+      # Étape 1: Checkout du code
       - name: "🛎️ Checkout du code"
         uses: actions/checkout@v4.1.1
 
+      # Étape 2: Authentification à Docker Hub
       - name: "🔐 Login Docker Hub"
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
+          username: ${{ secrets.DOCKER_USERNAME }}  # Utilise un secret GitHub
           password: ${{ secrets.DOCKER_TOKEN }}
 
+      # Étape 3: Build et push de l'image Docker
       - name: "🏗️ Build Docker"
         uses: docker/build-push-action@v4
         with:
-          context: .
-          push: true
+          context: .  # Répertoire de build
+          push: true  # Push l'image après le build
           tags: |
             ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.APP_NAME }}:${{ github.sha }}
             ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.APP_NAME }}:latest
 
+      # Étape 4: Installation de K3s (Kubernetes léger)
       - name: "🖥️ Installer K3s"
         run: |
           curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=${{ env.K3S_VERSION }} sh -
-          sudo chmod 644 /etc/rancher/k3s/k3s.yaml
+          sudo chmod 644 /etc/rancher/k3s/k3s.yaml  # Ajuste les permissions
 
+      # Étape 5: Configuration de kubectl
       - name: "⚙️ Configurer kubectl"
         run: |
           mkdir -p $HOME/.kube
           sudo cp /etc/rancher/k3s/k3s.yaml $HOME/.kube/config
           sudo chown $(id -u):$(id -g) $HOME/.kube/config
 
+      # Étape 6: Nettoyage avant Terraform
       - name: "🧹 Nettoyer avant Terraform"
         run: |
+          # Supprime les ressources existantes pour éviter les conflits
           kubectl delete deployment ${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }} --ignore-not-found=true
           kubectl delete service ${{ env.SERVICE_NAME }} -n ${{ env.NAMESPACE }} --ignore-not-found=true
           kubectl delete configmap app-config -n ${{ env.NAMESPACE }} --ignore-not-found=true
           kubectl delete secret database-credentials -n ${{ env.NAMESPACE }} --ignore-not-found=true
 
+      # Étape 7: Installation de Terraform
       - name: "⚙️ Installer Terraform"
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
+      # Étape 8: Déploiement avec Terraform
       - name: "🚀 Déployer avec Terraform"
-        working-directory: ./infra
+        working-directory: ./infra  # Exécute dans le dossier infra
         env:
           TF_VAR_docker_username: ${{ secrets.DOCKER_USERNAME }}
           TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
           TF_VAR_image_tag: ${{ github.sha }}
         run: |
-          terraform init
-          terraform validate
+          terraform init    # Initialise Terraform
+          terraform validate  # Valide la configuration
+          # Importe le namespace s'il existe déjà
           terraform import kubernetes_namespace.microservice ${{ env.NAMESPACE }} || true
-          terraform apply -auto-approve
+          terraform apply -auto-approve  # Applique les changements
 
+      # Étape 9: Vérification du déploiement
       - name: "🔍 Vérifier le déploiement"
         run: |
           echo "=== Ressources déployées ==="
-          kubectl get all -n ${{ env.NAMESPACE }}
+          kubectl get all -n ${{ env.NAMESPACE }}  # Liste toutes les ressources
           
           echo "=== Détails du déploiement ==="
           kubectl describe deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }}
           
           echo "=== Test de connectivité ==="
+          # Port-forward temporaire pour tester le service
           kubectl port-forward svc/${{ env.SERVICE_NAME }} ${{ env.SERVICE_PORT }}:${{ env.CONTAINER_PORT }} -n ${{ env.NAMESPACE }} >/dev/null 2>&1 &
-          sleep 10
+          sleep 10  # Attente que le port-forward soit actif
           
+          # Test de santé de l'application
           if curl -sSf http://localhost:${{ env.SERVICE_PORT }}/healthz; then
             echo "✅ Application accessible"
           else
@@ -196,8 +227,9 @@ jobs:
             exit 1
           fi
 
+      # Étape 10: Rollback en cas d'échec
       - name: "🔄 Rollback en cas d'échec"
-        if: failure()
+        if: failure()  # Exécuté seulement en cas d'échec
         run: |
           echo "=== Lancement du rollback ==="
           kubectl rollout undo deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }}
@@ -205,6 +237,7 @@ jobs:
           kubectl get pods -n ${{ env.NAMESPACE }}
           exit 1
 
+      # Étape 11: Notification d'échec par email
       - name: "📧 Notification d'échec"
         if: failure()
         uses: dawidd6/action-send-mail@v3
@@ -227,39 +260,45 @@ jobs:
             
             Un rollback a été effectué.
 
+  # Quatrième job : Déploiement du monitoring
   monitoring-deploy:
     name: "4. Déploiement Monitoring"
-    needs: docker-deploy
+    needs: docker-deploy  # Dépend du job docker-deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 30  # Augmentation du timeout global
+    timeout-minutes: 30  # Timeout après 30 minutes
     
     steps:
+      # Étape 1: Checkout du code
       - name: "🛎️ Checkout du code"
         uses: actions/checkout@v4.1.1
     
+      # Étape 2: Installation de Docker Compose
       - name: "📦 Installer Docker Compose"
         run: |
           sudo curl -L "https://github.com/docker/compose/releases/download/v2.23.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
           sudo chmod +x /usr/local/bin/docker-compose
           docker-compose --version
-    
+
+      # Étape 3: Nettoyage de l'environnement
       - name: "🧹 Nettoyer l'environnement"
         working-directory: ./monitoring
         run: |
-          docker-compose down -v --remove-orphans || true
-          sudo rm -rf grafana-storage || true
+          docker-compose down -v --remove-orphans || true  # Arrête les conteneurs existants
+          sudo rm -rf grafana-storage || true  # Nettoie le stockage Grafana
           mkdir -p grafana-storage
-          chmod -R 777 grafana-storage  # Assure les permissions
+          chmod -R 777 grafana-storage  # Assure les permissions nécessaires
 
+      # Étape 4: Démarrage des services de monitoring
       - name: "🚀 Démarrer les services"
         working-directory: ./monitoring
         env:
           GF_INSTALL_PLUGINS: ""  # Désactive les plugins par défaut
         run: |
-          docker-compose up -d
+          docker-compose up -d  # Démare les services en arrière-plan
           echo "Attente initiale (30s) pour l'initialisation..."
           sleep 30
 
+      # Étape 5: Vérification de l'état des conteneurs
       - name: "🔍 Vérifier l'état des conteneurs"
         working-directory: ./monitoring
         run: |
@@ -271,34 +310,35 @@ jobs:
           fi
           echo "✅ Tous les services sont en cours d'exécution"
 
+      # Étape 6: Attente que Grafana soit prêt (version améliorée)
       - name: "⏳ Attendre Grafana (version améliorée)"
         working-directory: ./monitoring
         run: |
           echo "Attente du démarrage de Grafana..."
           start_time=$(date +%s)
-          timeout=1200  # 20 minutes
+          timeout=1200  # 20 minutes max
           
           while :; do
-            # Vérifier si le conteneur est en cours d'exécution
+            # Vérifie si le conteneur Grafana est en cours d'exécution
             if ! docker-compose ps | grep grafana | grep -q "Up"; then
               echo "❌ Le conteneur Grafana s'est arrêté"
               docker-compose logs grafana
               exit 1
             fi
             
-            # Vérifier la santé via l'API
+            # Vérifie la santé via l'API
             if curl -s http://localhost:3000/api/health | grep -q "\"database\":\"ok\""; then
               echo "✅ Grafana prêt après $(($(date +%s) - start_time)) secondes"
               break
             fi
             
-            # Vérifier aussi le endpoint de login
+            # Vérifie aussi le endpoint de login
             if curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/login | grep -q 200; then
               echo "✅ Grafana login page accessible après $(($(date +%s) - start_time)) secondes"
               break
             fi
             
-            # Timeout
+            # Timeout après 20 minutes
             if [ $(($(date +%s) - start_time)) -ge $timeout ]; then
               echo "❌ Timeout - Grafana n'a pas démarré après 20 minutes"
               docker-compose logs grafana
@@ -309,6 +349,7 @@ jobs:
             sleep 10
           done
 
+      # Étape 7: Configuration de la source de données Prometheus dans Grafana
       - name: "📈 Configurer Grafana"
         working-directory: ./monitoring
         run: |
@@ -340,6 +381,7 @@ jobs:
           echo "❌ Échec après 5 tentatives"
           exit 1
 
+      # Étape 8: Génération d'un rapport de monitoring
       - name: "📝 Générer rapport"
         working-directory: ./monitoring
         run: |
@@ -350,5 +392,3 @@ jobs:
           curl -s http://localhost:9113/metrics | head -n 20 >> report.md
           echo "## Targets Prometheus" >> report.md
           curl -s http://localhost:9090/api/v1/targets | jq . >> report.md
-
-  
