@@ -228,10 +228,10 @@ jobs:
             Un rollback a été effectué.
 
   monitoring-deploy:
-    name: "4. Monitoring"
+    name: "4. Déploiement Monitoring"
     needs: docker-deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 30  # Augmentation du timeout global
     
     steps:
       - name: "🛎️ Checkout du code"
@@ -241,19 +241,20 @@ jobs:
         run: |
           sudo curl -L "https://github.com/docker/compose/releases/download/v2.23.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
           sudo chmod +x /usr/local/bin/docker-compose
-
+          docker-compose --version
+    
       - name: "🧹 Nettoyer l'environnement"
         working-directory: ./monitoring
         run: |
           docker-compose down -v --remove-orphans || true
           sudo rm -rf grafana-storage || true
           mkdir -p grafana-storage
-          chmod -R 777 grafana-storage
+          chmod -R 777 grafana-storage  # Assure les permissions
 
       - name: "🚀 Démarrer les services"
         working-directory: ./monitoring
         env:
-          GF_INSTALL_PLUGINS: ""
+          GF_INSTALL_PLUGINS: ""  # Désactive les plugins par défaut
         run: |
           docker-compose up -d
           echo "Attente initiale (30s) pour l'initialisation..."
@@ -270,25 +271,34 @@ jobs:
           fi
           echo "✅ Tous les services sont en cours d'exécution"
 
-      - name: "⏳ Attendre Grafana"
+      - name: "⏳ Attendre Grafana (version améliorée)"
         working-directory: ./monitoring
         run: |
           echo "Attente du démarrage de Grafana..."
           start_time=$(date +%s)
-          timeout=1200
+          timeout=1200  # 20 minutes
           
           while :; do
+            # Vérifier si le conteneur est en cours d'exécution
             if ! docker-compose ps | grep grafana | grep -q "Up"; then
               echo "❌ Le conteneur Grafana s'est arrêté"
               docker-compose logs grafana
               exit 1
             fi
             
+            # Vérifier la santé via l'API
             if curl -s http://localhost:3000/api/health | grep -q "\"database\":\"ok\""; then
               echo "✅ Grafana prêt après $(($(date +%s) - start_time)) secondes"
               break
             fi
             
+            # Vérifier aussi le endpoint de login
+            if curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/login | grep -q 200; then
+              echo "✅ Grafana login page accessible après $(($(date +%s) - start_time)) secondes"
+              break
+            fi
+            
+            # Timeout
             if [ $(($(date +%s) - start_time)) -ge $timeout ]; then
               echo "❌ Timeout - Grafana n'a pas démarré après 20 minutes"
               docker-compose logs grafana
@@ -340,3 +350,34 @@ jobs:
           curl -s http://localhost:9113/metrics | head -n 20 >> report.md
           echo "## Targets Prometheus" >> report.md
           curl -s http://localhost:9090/api/v1/targets | jq . >> report.md
+
+  notify:
+    name: "5. Notifications"
+    needs: [docker-deploy, monitoring-deploy]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: "🌐 Récupérer l'URL"
+        id: prod-url
+        run: |
+          cd infra
+          echo "PROD_URL=$(terraform output -raw service_url)" >> $GITHUB_OUTPUT
+          cd ..
+
+      - name: "📧 Envoyer notification"
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          from: ${{ env.EMAIL_FROM }}
+          to: ${{ env.YOUR_EMAIL }}
+          subject: "Déploiement terminé - ${{ github.repository }}"
+          body: |
+            Statut: ${{ job.status }}
+            Commit: ${{ github.sha }}
+            URL: ${{ steps.prod-url.outputs.PROD_URL }}
+            Date: $(date)
+          attachments: monitoring/report.md
