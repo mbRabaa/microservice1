@@ -351,33 +351,4 @@ jobs:
           echo "## Targets Prometheus" >> report.md
           curl -s http://localhost:9090/api/v1/targets | jq . >> report.md
 
-  notify:
-    name: "5. Notifications"
-    needs: [docker-deploy, monitoring-deploy]
-    runs-on: ubuntu-latest
-    if: always()
-    
-    steps:
-      - name: "🌐 Récupérer l'URL"
-        id: prod-url
-        run: |
-          cd infra
-          echo "PROD_URL=$(terraform output -raw service_url)" >> $GITHUB_OUTPUT
-          cd ..
-
-      - name: "📧 Envoyer notification"
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          username: ${{ secrets.EMAIL_USERNAME }}
-          password: ${{ secrets.EMAIL_PASSWORD }}
-          from: ${{ env.EMAIL_FROM }}
-          to: ${{ env.YOUR_EMAIL }}
-          subject: "Déploiement terminé - ${{ github.repository }}"
-          body: |
-            Statut: ${{ job.status }}
-            Commit: ${{ github.sha }}
-            URL: ${{ steps.prod-url.outputs.PROD_URL }}
-            Date: $(date)
-          attachments: monitoring/report.md
+  
