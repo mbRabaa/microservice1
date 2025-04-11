@@ -192,15 +192,43 @@ jobs:
 
       # Étape 8: Déploiement avec Terraform
       - name: "🚀 Déployer avec Terraform"
-        working-directory: ./infra  # Exécute dans le dossier infra
+        working-directory: ./infra
         env:
           TF_VAR_docker_username: ${{ secrets.DOCKER_USERNAME }}
           TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
           TF_VAR_image_tag: ${{ github.sha }}
         run: |
           terraform init
-           terraform validate
+          terraform validate
           terraform apply -auto-approve
+
+      - name: "🐞 Debug des Pods"
+        if: always()
+        run: |
+          echo "=== État des Pods ==="
+          kubectl get pods -n ${{ env.NAMESPACE }} -o wide
+          echo "=== Détails des Pods ==="
+          kubectl describe pods -n ${{ env.NAMESPACE }} -l app=${{ env.APP_NAME }}
+          echo "=== Logs des Pods ==="
+          kubectl logs -n ${{ env.NAMESPACE }} -l app=${{ env.APP_NAME }} --all-containers=true --tail=100
+          echo "=== Événements ==="
+          kubectl get events -n ${{ env.NAMESPACE }} --sort-by='.metadata.creationTimestamp'
+
+      - name: "📧 Notification d'échec"
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          from: ${{ env.EMAIL_FROM }}
+          to: ${{ env.YOUR_EMAIL }}
+          subject: "Échec de déploiement - ${{ env.APP_NAME }}"
+          body: |
+            Commit: ${{ github.sha }}
+            Logs des pods:
+            $(kubectl logs -n ${{ env.NAMESPACE }} -l app=${{ env.APP_NAME }} --all-containers=true --tail=50)
 
       # Étape 9: Vérification du déploiement
       - name: "🔍 Vérifier le déploiement"
