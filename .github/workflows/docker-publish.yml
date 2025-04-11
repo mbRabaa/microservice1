@@ -263,132 +263,110 @@ jobs:
   # Quatrième job : Déploiement du monitoring
   monitoring-deploy:
     name: "4. Déploiement Monitoring"
-    needs: docker-deploy  # Dépend du job docker-deploy
+    needs: docker-deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 30  # Timeout après 30 minutes
-    
+    env:
+      PROMETHEUS_PORT: 9090
+      GRAFANA_PORT: 3000
+      NODEJS_PORT: 8081
+      
     steps:
-      # Étape 1: Checkout du code
       - name: "🛎️ Checkout du code"
-        uses: actions/checkout@v4.1.1
-    
-      # Étape 2: Installation de Docker Compose
-      - name: "📦 Installer Docker Compose"
+        uses: actions/checkout@v4
+
+      - name: "🐳 Installer Docker Compose"
         run: |
           sudo curl -L "https://github.com/docker/compose/releases/download/v2.23.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
           sudo chmod +x /usr/local/bin/docker-compose
-          docker-compose --version
 
-      # Étape 3: Nettoyage de l'environnement
       - name: "🧹 Nettoyer l'environnement"
         working-directory: ./monitoring
-        run: |
-          docker-compose down -v --remove-orphans || true  # Arrête les conteneurs existants
-          sudo rm -rf grafana-storage || true  # Nettoie le stockage Grafana
-          mkdir -p grafana-storage
-          chmod -R 777 grafana-storage  # Assure les permissions nécessaires
+        run: docker-compose down -v --remove-orphans || true
 
-      # Étape 4: Démarrage des services de monitoring
-      - name: "🚀 Démarrer les services"
+      - name: "🚀 Démarrer le monitoring"
         working-directory: ./monitoring
-        env:
-          GF_INSTALL_PLUGINS: ""  # Désactive les plugins par défaut
         run: |
-          docker-compose up -d  # Démare les services en arrière-plan
-          echo "Attente initiale (30s) pour l'initialisation..."
+          docker-compose up -d --build
+          echo "Attente du démarrage des services (30s)..."
           sleep 30
 
-      # Étape 5: Vérification de l'état des conteneurs
-      - name: "🔍 Vérifier l'état des conteneurs"
+      - name: "🔍 Vérifier les services"
         working-directory: ./monitoring
         run: |
-          if docker-compose ps | grep -v "Up" | grep -q -v "STATUS"; then
-            echo "❌ Certains services ne sont pas démarrés:"
-            docker-compose ps
+          # Vérifie que tous les services sont en cours d'exécution
+          if ! docker-compose ps | grep -q "Up"; then
+            echo "❌ Certains services ne sont pas démarrés"
             docker-compose logs
             exit 1
           fi
-          echo "✅ Tous les services sont en cours d'exécution"
-
-      # Étape 6: Attente que Grafana soit prêt (version améliorée)
-      - name: "⏳ Attendre Grafana (version améliorée)"
-        working-directory: ./monitoring
-        run: |
-          echo "Attente du démarrage de Grafana..."
-          start_time=$(date +%s)
-          timeout=1200  # 20 minutes max
           
-          while :; do
-            # Vérifie si le conteneur Grafana est en cours d'exécution
-            if ! docker-compose ps | grep grafana | grep -q "Up"; then
-              echo "❌ Le conteneur Grafana s'est arrêté"
-              docker-compose logs grafana
+          # Vérifie spécifiquement chaque service
+          SERVICES=("nodejs-app:8080" "prometheus:9090" "grafana:3000")
+          for service in "${SERVICES[@]}"; do
+            if ! docker-compose ps | grep "$service" | grep -q "Up"; then
+              echo "❌ Service $service non démarré"
               exit 1
             fi
-            
-            # Vérifie la santé via l'API
-            if curl -s http://localhost:3000/api/health | grep -q "\"database\":\"ok\""; then
-              echo "✅ Grafana prêt après $(($(date +%s) - start_time)) secondes"
-              break
-            fi
-            
-            # Vérifie aussi le endpoint de login
-            if curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/login | grep -q 200; then
-              echo "✅ Grafana login page accessible après $(($(date +%s) - start_time)) secondes"
-              break
-            fi
-            
-            # Timeout après 20 minutes
-            if [ $(($(date +%s) - start_time)) -ge $timeout ]; then
-              echo "❌ Timeout - Grafana n'a pas démarré après 20 minutes"
-              docker-compose logs grafana
-              exit 1
-            fi
-            
-            echo "En attente... ($(($(date +%s) - start_time))s)"
-            sleep 10
           done
+          echo "✅ Tous les services sont opérationnels"
 
-      # Étape 7: Configuration de la source de données Prometheus dans Grafana
-      - name: "📈 Configurer Grafana"
+      - name: "📊 Configurer Grafana"
+        working-directory: ./monitoring
+        env:
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+        run: |
+          # Configuration de la source de données Prometheus
+          until curl -s http://localhost:$GRAFANA_PORT/api/health; do
+            echo "En attente de Grafana..."
+            sleep 5
+          done
+          
+          curl -X POST "http://localhost:$GRAFANA_PORT/api/datasources" \
+            -H "Content-Type: application/json" \
+            -u "admin:$GRAFANA_ADMIN_PASSWORD" \
+            -d '{
+              "name":"Prometheus",
+              "type":"prometheus",
+              "url":"http://prometheus:9090",
+              "access":"proxy",
+              "basicAuth":false,
+              "isDefault":true
+            }'
+          
+          echo "Configuration Grafana terminée"
+
+      - name: "🧪 Tests de fonctionnement"
+        run: |
+          # Test Prometheus
+          if ! curl -s http://localhost:$PROMETHEUS_PORT/-/ready | grep -q "Prometheus"; then
+            echo "❌ Prometheus non prêt"
+            exit 1
+          fi
+          
+          # Test Node.js metrics
+          if ! curl -s http://localhost:$NODEJS_PORT/metrics | grep -q "process_cpu_seconds_total"; then
+            echo "❌ Métriques Node.js non disponibles"
+            exit 1
+          fi
+          
+          # Test Grafana
+          if ! curl -s http://localhost:$GRAFANA_PORT/api/health | grep -q "\"database\":\"ok\""; then
+            echo "❌ Grafana non prêt"
+            exit 1
+          fi
+
+      - name: "📝 Générer un rapport"
         working-directory: ./monitoring
         run: |
-          echo "Configuration de la source de données..."
-          for attempt in {1..5}; do
-            response=$(curl -s -o /dev/null -w "%{http_code}" \
-              -X POST "http://localhost:3000/api/datasources" \
-              -H "Content-Type: application/json" \
-              -u "admin:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
-              -d '{
-                "name":"Prometheus",
-                "type":"prometheus",
-                "url":"http://prometheus:9090",
-                "access":"proxy",
-                "basicAuth":false
-              }')
-            
-            if [ "$response" -eq 200 ]; then
-              echo "✅ Configuration réussie"
-              exit 0
-            elif [ "$response" -eq 409 ]; then
-              echo "ℹ️ La source existe déjà"
-              exit 0
-            else
-              echo "⚠️ Échec tentative $attempt (HTTP $response)"
-              sleep 15
-            fi
-          done
-          echo "❌ Échec après 5 tentatives"
-          exit 1
-
-      # Étape 8: Génération d'un rapport de monitoring
-      - name: "📝 Générer rapport"
-        working-directory: ./monitoring
-        run: |
-          echo "# Rapport de Monitoring" > report.md
-          echo "## État des services" >> report.md
-          docker-compose ps >> report.md
-          echo "## Métriques NGINX" >> report.md
-          curl -s http://localhost:9113/metrics | head -n 20 >> report.md
-          echo "## Targets Prometheus" >> report.md
-          curl -s http://localhost:9090/api/v1/targets | jq . >> report.md
+          echo "# Rapport de Monitoring" > monitoring-report.md
+          echo "## État des Services" >> monitoring-report.md
+          docker-compose ps >> monitoring-report.md
+          
+          echo "## Cibles Prometheus" >> monitoring-report.md
+          curl -s http://localhost:$PROMETHEUS_PORT/api/v1/targets | jq . >> monitoring-report.md
+          
+          echo "## Métriques Node.js" >> monitoring-report.md
+          curl -s http://localhost:$NODEJS_PORT/metrics | head -n 20 >> monitoring-report.md
+          
+          echo "Rapport généré :"
+          cat monitoring-report.md

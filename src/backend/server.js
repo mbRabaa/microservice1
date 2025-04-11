@@ -1,15 +1,17 @@
+import express from 'express';
+import cors from 'cors';
+import pkg from 'pg';
+const { Pool } = pkg;
+import promClient from 'prom-client';
 import dotenv from 'dotenv';
-dotenv.config();
-const express = require('express');
-const cors = require('cors');
-const { Pool } = require('pg');
-const dotenv = require('dotenv');
 
-// Load environment variables
 dotenv.config();
 
 const app = express();
-const port = process.env.PORT || 5000;
+const register = new promClient.Registry();
+promClient.collectDefaultMetrics({ register });
+
+const port = process.env.PORT || 8080;
 
 // Middleware
 app.use(cors());
@@ -41,7 +43,17 @@ app.get('/api/routes', async (req, res) => {
   }
 });
 
+// Metrics endpoint
+app.get('/metrics', async (req, res) => {
+  try {
+    res.set('Content-Type', register.contentType);
+    res.end(await register.metrics());
+  } catch (error) {
+    res.status(500).end('Error generating metrics');
+  }
+});
+
 // Start the server
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
+app.listen(port, '0.0.0.0', () => {
+  console.log(`Server running on http://0.0.0.0:${port}`);
 });
