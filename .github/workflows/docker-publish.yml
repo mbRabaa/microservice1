@@ -198,11 +198,9 @@ jobs:
           TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
           TF_VAR_image_tag: ${{ github.sha }}
         run: |
-          terraform init    # Initialise Terraform
-          terraform validate  # Valide la configuration
-          # Importe le namespace s'il existe déjà
-          terraform import kubernetes_namespace.microservice ${{ env.NAMESPACE }} || true
-          terraform apply -auto-approve  # Applique les changements
+          terraform init
+           terraform validate
+          terraform apply -auto-approve
 
       # Étape 9: Vérification du déploiement
       - name: "🔍 Vérifier le déploiement"

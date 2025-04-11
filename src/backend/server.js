@@ -53,6 +53,10 @@ app.get('/metrics', async (req, res) => {
   }
 });
 
+// Endpoint de santé simplifié
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'OK' });
+});
 // Start the server
 app.listen(port, '0.0.0.0', () => {
   console.log(`Server running on http://0.0.0.0:${port}`);

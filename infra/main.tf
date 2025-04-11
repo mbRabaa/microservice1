@@ -1,4 +1,9 @@
-# 1. Création d'un namespace dédié
+# Configuration du provider Kubernetes
+provider "kubernetes" {
+  config_path = "~/.kube/config"
+}
+
+# 1. Namespace dédié
 resource "kubernetes_namespace" "microservice" {
   metadata {
     name = "microservice"
@@ -9,12 +14,45 @@ resource "kubernetes_namespace" "microservice" {
   }
 }
 
-# 2. Déploiement de l'application
+# 2. Configuration de l'application
+resource "kubernetes_config_map" "app_config" {
+  metadata {
+    name      = "app-config"
+    namespace = kubernetes_namespace.microservice.metadata[0].name
+  }
+
+  data = {
+    "app_config.yml" = <<-EOT
+      logging:
+        level: INFO
+      server:
+        port: 8080
+        health_check_path: /health
+    EOT
+  }
+}
+
+# 3. Secrets de la base de données
+resource "kubernetes_secret" "db_creds" {
+  metadata {
+    name      = "database-credentials"
+    namespace = kubernetes_namespace.microservice.metadata[0].name
+  }
+
+  data = {
+    db_host     = base64encode("postgres-service.microservice.svc.cluster.local")
+    db_password = base64encode(var.db_password)
+    db_user     = base64encode("app_user")
+  }
+
+  type = "Opaque"
+}
+
+# 4. Déploiement principal
 resource "kubernetes_deployment" "app" {
   metadata {
     name      = "gestion-trajet-deployment"
     namespace = kubernetes_namespace.microservice.metadata[0].name
-    
     labels = {
       app     = "gestion-trajet"
       version = var.image_tag
@@ -46,7 +84,7 @@ resource "kubernetes_deployment" "app" {
         }
         annotations = {
           "prometheus.io/scrape" = "true"
-          "prometheus.io/port"   = "80"
+          "prometheus.io/port"   = "8080"
           "prometheus.io/path"   = "/metrics"
         }
       }
@@ -58,7 +96,19 @@ resource "kubernetes_deployment" "app" {
           
           port {
             name           = "http"
-            container_port = 80
+            container_port = 8080
+          }
+
+          env_from {
+            config_map_ref {
+              name = kubernetes_config_map.app_config.metadata[0].name
+            }
+          }
+
+          env_from {
+            secret_ref {
+              name = kubernetes_secret.db_creds.metadata[0].name
+            }
           }
 
           resources {
@@ -74,70 +124,39 @@ resource "kubernetes_deployment" "app" {
 
           liveness_probe {
             http_get {
-              path = "/healthz"
-              port = 80
+              path = "/health"
+              port = 8080
             }
             initial_delay_seconds = 30
             period_seconds        = 10
-            timeout_seconds       = 5
-            failure_threshold     = 3
           }
 
           readiness_probe {
             http_get {
-              path = "/ready"
-              port = 80
+              path = "/health"
+              port = 8080
             }
             initial_delay_seconds = 5
             period_seconds        = 5
-            timeout_seconds       = 5
-            success_threshold     = 1
           }
-
-          env {
-            name  = "APP_ENV"
-            value = "production"
-          }
-          
-          env {
-            name = "DB_HOST"
-            value_from {
-              secret_key_ref {
-                name = kubernetes_secret.db_creds.metadata[0].name
-                key  = "db_host"
-              }
-            }
-          }
-
-          env {
-            name  = "PORT"
-            value = "80"
-          }
-        }
-
-        toleration {
-          key      = "CriticalAddonsOnly"
-          operator = "Exists"
-          effect   = "NoSchedule"
-        }
-
-        node_selector = {
-          "kubernetes.io/arch" = "amd64"
         }
       }
+    }
+
+    timeouts {
+      create = "20m"
+      update = "20m"
     }
   }
 }
 
-# 3. Service pour exposer l'application
+# 5. Service d'exposition
 resource "kubernetes_service" "app" {
   metadata {
     name      = "gestion-trajet-service"
     namespace = kubernetes_namespace.microservice.metadata[0].name
-    
     annotations = {
       "metallb.universe.tf/address-pool" = "default"
-      "prometheus.io/scrape"             = "true"
     }
   }
 
@@ -149,59 +168,18 @@ resource "kubernetes_service" "app" {
     port {
       name        = "http"
       port        = 80
-      target_port = 80
-      protocol    = "TCP"
+      target_port = 8080
     }
 
     type = "LoadBalancer"
   }
 }
 
-# 4. Secret pour les informations sensibles
-resource "kubernetes_secret" "db_creds" {
-  metadata {
-    name      = "database-credentials"
-    namespace = kubernetes_namespace.microservice.metadata[0].name
-  }
-
-  data = {
-    db_host     = base64encode("postgres-service.microservice.svc.cluster.local")
-    db_password = base64encode(var.db_password)
-    db_user     = base64encode("app_user")
-  }
-
-  type = "Opaque"
-}
-
-# 5. ConfigMap pour la configuration
-resource "kubernetes_config_map" "app_config" {
-  metadata {
-    name      = "app-config"
-    namespace = kubernetes_namespace.microservice.metadata[0].name
-  }
-
-  data = {
-    "app_config.yml" = <<-EOT
-      logging:
-        level: INFO
-      features:
-        cache_enabled: true
-      server:
-        port: 80
-        health_check_path: /healthz
-        readiness_path: /ready
-    EOT
-  }
-}
-
-# 6. Auto-scaling horizontal
+# 6. Autoscaling Horizontal
 resource "kubernetes_horizontal_pod_autoscaler" "app" {
   metadata {
     name      = "gestion-trajet-hpa"
     namespace = kubernetes_namespace.microservice.metadata[0].name
-    labels = {
-      app = "gestion-trajet"
-    }
   }
 
   spec {
