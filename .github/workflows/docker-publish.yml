@@ -1,4 +1,4 @@
-name: CI/CD - Pipeline DevOps complais 
+name: CI/CD - Pipeline DevOps complais +monitoring +notification 
 # Nom de votre workflow qui apparaîtra dans l'interface GitHub Actions
 
 on:

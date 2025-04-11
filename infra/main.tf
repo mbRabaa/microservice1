@@ -1,37 +1,3 @@
-# Configuration Terraform
-terraform {
-  required_providers {
-    kubernetes = {
-      source  = "hashicorp/kubernetes"
-      version = "2.23.0"
-    }
-  }
-}
-
-# Variables d'entrée
-variable "docker_username" {
-  description = "Nom d'utilisateur Docker Hub"
-  type        = string
-}
-
-variable "db_password" {
-  description = "Mot de passe de la base de données"
-  type        = string
-  sensitive   = true
-}
-
-variable "image_tag" {
-  description = "Tag de l'image Docker"
-  type        = string
-  default     = "latest"
-}
-
-variable "replica_count" {
-  description = "Nombre de réplicas initiaux"
-  type        = number
-  default     = 1
-}
-
 # 1. Namespace dédié
 resource "kubernetes_namespace" "microservice" {
   metadata {
@@ -43,7 +9,7 @@ resource "kubernetes_namespace" "microservice" {
   }
 }
 
-# 2. Configuration de l'application (optimisé)
+# 2. Configuration de l'application
 resource "kubernetes_config_map" "app_config" {
   metadata {
     name      = "app-config"
@@ -51,24 +17,18 @@ resource "kubernetes_config_map" "app_config" {
   }
 
   data = {
-    "application.yml" = yamlencode({
-      logging = {
-        level = "INFO"
-      }
-      server = {
-        port              = 8080
-        health_check_path = "/health"
-        readiness_path    = "/ready"
-      }
-      database = {
-        host = "postgres-service.microservice.svc.cluster.local"
-        user = "app_user"
-      }
-    })
+    "app_config.yml" = <<-EOT
+      logging:
+        level: INFO
+      server:
+        port: 8080
+        health_check_path: /health
+        readiness_path: /ready
+    EOT
   }
 }
 
-# 3. Secrets de la base de données (sécurisé)
+# 3. Secrets de la base de données
 resource "kubernetes_secret" "db_creds" {
   metadata {
     name      = "database-credentials"
@@ -76,15 +36,15 @@ resource "kubernetes_secret" "db_creds" {
   }
 
   data = {
-    DB_PASSWORD = var.db_password
-    DB_HOST     = base64encode("postgres-service.microservice.svc.cluster.local")
-    DB_USER     = base64encode("app_user")
+    db_host     = base64encode("postgres-service.microservice.svc.cluster.local")
+    db_password = base64encode(var.db_password)
+    db_user     = base64encode("app_user")
   }
 
   type = "Opaque"
 }
 
-# 4. Déploiement principal (version robuste)
+# 4. Déploiement principal (version optimisée)
 resource "kubernetes_deployment" "app" {
   metadata {
     name      = "gestion-trajet-deployment"
@@ -101,7 +61,7 @@ resource "kubernetes_deployment" "app" {
     strategy {
       type = "RollingUpdate"
       rolling_update {
-        max_surge       = "25%"
+        max_surge       = 1
         max_unavailable = 0
       }
     }
@@ -126,36 +86,27 @@ resource "kubernetes_deployment" "app" {
       }
 
       spec {
-        # Ajout d'un ServiceAccount pour de meilleures pratiques
-        service_account_name = kubernetes_service_account.app.metadata[0].name
-        
         container {
           name  = "app-container"
           image = "${var.docker_username}/gestion-trajet:${var.image_tag}"
           image_pull_policy = "IfNotPresent"
           
-          ports {
-            container_port = 8080
+          port {
             name           = "http"
-            protocol       = "TCP"
+            container_port = 8080
           }
 
           env {
-            name = "NODE_ENV"
-            value = "production"
-          }
-
-          env {
-            name = "PORT"
+            name  = "PORT"
             value = "8080"
           }
 
-          # Chargement sécurisé des variables
           env_from {
             config_map_ref {
               name = kubernetes_config_map.app_config.metadata[0].name
             }
           }
+
           env_from {
             secret_ref {
               name = kubernetes_secret.db_creds.metadata[0].name
@@ -173,26 +124,24 @@ resource "kubernetes_deployment" "app" {
             }
           }
 
-          # Probes optimisées
           liveness_probe {
             http_get {
               path = "/health"
               port = 8080
             }
-            initial_delay_seconds = 60  # Délai augmenté
+            initial_delay_seconds = 45  # Augmenté pour les applications lentes
             period_seconds        = 10
-            timeout_seconds       = 3
             failure_threshold     = 3
           }
 
           readiness_probe {
             http_get {
-              path = "/ready"
+              path = "/ready"  # Endpoint distinct pour readiness
               port = 8080
             }
-            initial_delay_seconds = 20  # Délai augmenté
+            initial_delay_seconds = 5
             period_seconds        = 5
-            timeout_seconds       = 3
+            success_threshold     = 1
             failure_threshold     = 3
           }
 
@@ -201,60 +150,28 @@ resource "kubernetes_deployment" "app" {
               path = "/health"
               port = 8080
             }
-            failure_threshold = 30  # 30 * 5s = 150s max
-            period_seconds    = 5
+            failure_threshold = 30  # 30 tentatives
+            period_seconds    = 5   # Intervalle de 5s
           }
-
-          # Sécurité renforcée
-          security_context {
-            run_as_non_root = true
-            run_as_user     = 1000
-            capabilities {
-              drop = ["ALL"]
-            }
-          }
-        }
-
-        # Tolérance pour les nœuds
-        toleration {
-          key      = "app"
-          operator = "Equal"
-          value    = "gestion-trajet"
-          effect   = "NoSchedule"
         }
       }
     }
   }
-
-  # Ajout d'un timeout personnalisé
-  timeouts {
-    create = "15m"
-    update = "15m"
-  }
 }
 
-# 5. ServiceAccount pour le déploiement
-resource "kubernetes_service_account" "app" {
-  metadata {
-    name      = "gestion-trajet-sa"
-    namespace = kubernetes_namespace.microservice.metadata[0].name
-  }
-}
-
-# 6. Service d'exposition (optimisé)
+# 5. Service d'exposition
 resource "kubernetes_service" "app" {
   metadata {
     name      = "gestion-trajet-service"
     namespace = kubernetes_namespace.microservice.metadata[0].name
     annotations = {
       "metallb.universe.tf/address-pool" = "default"
-      "prometheus.io/scrape"             = "true"
     }
   }
 
   spec {
     selector = {
-      app = kubernetes_deployment.app.metadata[0].labels.app
+      app = "gestion-trajet"
     }
 
     port {
@@ -265,14 +182,10 @@ resource "kubernetes_service" "app" {
     }
 
     type = "LoadBalancer"
-
-    # Meilleure gestion du LoadBalancer
-    session_affinity = "None"
-    ip_families      = ["IPv4"]
   }
 }
 
-# 7. Autoscaling Horizontal (optimisé)
+# 6. Autoscaling Horizontal (optionnel)
 resource "kubernetes_horizontal_pod_autoscaler" "app" {
   metadata {
     name      = "gestion-trajet-hpa"
@@ -282,67 +195,12 @@ resource "kubernetes_horizontal_pod_autoscaler" "app" {
   spec {
     min_replicas = 1
     max_replicas = 5
-    
+    target_cpu_utilization_percentage = 80
+
     scale_target_ref {
       api_version = "apps/v1"
       kind        = "Deployment"
       name        = kubernetes_deployment.app.metadata[0].name
     }
-
-    # Métriques combinées
-    metric {
-      type = "Resource"
-      resource {
-        name = "cpu"
-        target {
-          type                = "Utilization"
-          average_utilization = 80
-        }
-      }
-    }
-    
-    metric {
-      type = "Resource"
-      resource {
-        name = "memory"
-        target {
-          type                = "Utilization"
-          average_utilization = 80
-        }
-      }
-    }
-
-    # Comportement de scaling
-    behavior {
-      scale_down {
-        stabilization_window_seconds = 300
-        policies {
-          type          = "Pods"
-          value         = 1
-          period_seconds = 60
-        }
-      }
-      scale_up {
-        stabilization_window_seconds = 60
-        policies {
-          type          = "Pods"
-          value         = 2
-          period_seconds = 45
-        }
-      }
-    }
   }
-}
-
-# 8. Sorties utiles
-output "application_url" {
-  value = "http://${kubernetes_service.app.status.0.load_balancer.0.ingress.0.ip}:${kubernetes_service.app.spec.0.port.0.port}"
-}
-
-output "namespace" {
-  value = kubernetes_namespace.microservice.metadata[0].name
-}
-
-output "deployment_name" {
-  value = kubernetes_deployment.app.metadata[0].name
 }
