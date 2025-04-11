@@ -1,7 +1,3 @@
-# Configuration du provider Kubernetes
-provider "kubernetes" {
-  config_path = "~/.kube/config"
-}
 
 # 1. Namespace dédié
 resource "kubernetes_namespace" "microservice" {
