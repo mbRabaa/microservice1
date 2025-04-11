@@ -1,4 +1,4 @@
-name: CI/CD - Pipeline DevOps avec Terraform et Kubernetes + monitoring + Rollback
+name: CI/CD - Pipeline DevOps avec Terraform et Kubernetes
 
 on:
   push:
@@ -6,24 +6,29 @@ on:
       - main
 
 env:
-  # Configuration de base
-  SONAR_HOST_URL: http://localhost:9000
+  # Configuration Kubernetes
   K3S_VERSION: v1.26.5+k3s1
-  TERRAFORM_VERSION: 1.5.5
   NAMESPACE: microservice
   DOCKER_REGISTRY: docker.io
-  NODE_VERSION: 20
+  
+  # Configuration Application
   APP_NAME: gestion-trajet
-  DEPLOYMENT_NAME: microservice1-deployment  # Corrigé pour correspondre à main.tf
-  SERVICE_NAME: gestion-trajet-service       # Corrigé pour correspondre à main.tf
+  DEPLOYMENT_NAME: gestion-trajet-deployment
+  SERVICE_NAME: gestion-trajet-service
+  CONTAINER_PORT: 80
   SERVICE_PORT: 80
-  CONTAINER_PORT: 80                         # Corrigé pour correspondre à main.tf
+  
+  # Configuration Terraform
+  TERRAFORM_VERSION: 1.5.5
+  TF_VAR_replica_count: 3
   
   # Configuration Monitoring
   PROMETHEUS_PORT: 9090
   GRAFANA_PORT: 3000
   GRAFANA_ADMIN_PASSWORD: rabaa123
-  GRAFANA_VERSION: 9.5.3
+  
+  # Configuration SonarQube
+  SONAR_HOST_URL: http://localhost:9000
   
   # Configuration Email
   YOUR_EMAIL: elmbarkirabea@gmail.com
@@ -41,7 +46,7 @@ jobs:
       - name: "⎔ Configurer Node.js"
         uses: actions/setup-node@v3
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: 20
           cache: 'npm'
 
       - name: "📦 Installer les dépendances"
@@ -149,7 +154,6 @@ jobs:
 
       - name: "🧹 Nettoyer avant Terraform"
         run: |
-          # Supprimer les ressources existantes mais conserver le namespace
           kubectl delete deployment ${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }} --ignore-not-found=true
           kubectl delete service ${{ env.SERVICE_NAME }} -n ${{ env.NAMESPACE }} --ignore-not-found=true
           kubectl delete configmap app-config -n ${{ env.NAMESPACE }} --ignore-not-found=true
@@ -174,30 +178,29 @@ jobs:
 
       - name: "🔍 Vérifier le déploiement"
         run: |
-          echo "=== État des ressources dans le namespace ${{ env.NAMESPACE }} ==="
+          echo "=== Ressources déployées ==="
           kubectl get all -n ${{ env.NAMESPACE }}
           
           echo "=== Détails du déploiement ==="
           kubectl describe deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }}
           
           echo "=== Test de connectivité ==="
-          # Configuration du port-forward temporaire pour les tests
-          timeout 60 kubectl port-forward svc/${{ env.SERVICE_NAME }} ${{ env.SERVICE_PORT }}:${{ env.CONTAINER_PORT }} -n ${{ env.NAMESPACE }} >/dev/null 2>&1 &
+          kubectl port-forward svc/${{ env.SERVICE_NAME }} ${{ env.SERVICE_PORT }}:${{ env.CONTAINER_PORT }} -n ${{ env.NAMESPACE }} >/dev/null 2>&1 &
           sleep 10
           
-          if curl -sSf http://localhost:${{ env.SERVICE_PORT }}; then
-            echo "✅ Test de santé réussi"
+          if curl -sSf http://localhost:${{ env.SERVICE_PORT }}/healthz; then
+            echo "✅ Application accessible"
           else
-            echo "⚠️ Le test de santé a échoué"
+            echo "❌ Échec de connexion"
             kubectl logs -l app=${{ env.APP_NAME }} -n ${{ env.NAMESPACE }} --tail=50
             exit 1
           fi
 
-      - name: "🔄 Rollback basique"
+      - name: "🔄 Rollback en cas d'échec"
         if: failure()
         run: |
-          echo "=== Déclenchement du rollback ==="
-          kubectl rollout undo deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }} || true
+          echo "=== Lancement du rollback ==="
+          kubectl rollout undo deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }}
           echo "=== État après rollback ==="
           kubectl get pods -n ${{ env.NAMESPACE }}
           exit 1
@@ -212,21 +215,20 @@ jobs:
           password: ${{ secrets.EMAIL_PASSWORD }}
           from: ${{ env.EMAIL_FROM }}
           to: ${{ env.YOUR_EMAIL }}
-          subject: "ÉCHEC Déploiement - ${{ github.repository }}"
+          subject: "Échec de déploiement - ${{ env.APP_NAME }}"
           body: |
-            Le déploiement a échoué et un rollback a été effectué.
+            Le déploiement a échoué.
             
             Détails:
             - Commit: ${{ github.sha }}
             - Application: ${{ env.APP_NAME }}
             - Namespace: ${{ env.NAMESPACE }}
-            - Statut: Échec
-            - Date: $(date)
+            - Heure: $(date)
             
-            Consultez les logs pour plus d'informations.
+            Un rollback a été effectué.
 
   monitoring-deploy:
-    name: "4. Déploiement Monitoring"
+    name: "4. Monitoring"
     needs: docker-deploy
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -239,8 +241,7 @@ jobs:
         run: |
           sudo curl -L "https://github.com/docker/compose/releases/download/v2.23.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
           sudo chmod +x /usr/local/bin/docker-compose
-          docker-compose --version
-    
+
       - name: "🧹 Nettoyer l'environnement"
         working-directory: ./monitoring
         run: |
