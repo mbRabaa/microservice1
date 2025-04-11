@@ -1,4 +1,4 @@
-name: CI/CD - Pipeline DevOps complais avec terraform +monotoring
+name: CI/CD - Pipeline DevOps complais 
 # Nom de votre workflow qui apparaîtra dans l'interface GitHub Actions
 
 on:
