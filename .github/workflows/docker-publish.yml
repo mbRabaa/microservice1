@@ -1,99 +1,101 @@
-name: CI/CD - Pipeline DevOps complais +monitoring +notification 
-# Nom de votre workflow qui apparaîtra dans l'interface GitHub Actions
+name: CI/CD - Pipeline DevOps complet avec monitoring + notification
 
 on:
   push:
     branches:
       - main
-# Déclenche le workflow à chaque push sur la branche main
 
 env:
-  # Section des variables d'environnement globales
   # Configuration Kubernetes
-  K3S_VERSION: v1.26.5+k3s1  # Version de K3s à installer
-  NAMESPACE: microservice     # Namespace Kubernetes à utiliser
-  DOCKER_REGISTRY: docker.io  # Registry Docker utilisée
+  K3S_VERSION: v1.26.5+k3s1
+  NAMESPACE: microservice
+  DOCKER_REGISTRY: docker.io
   
   # Configuration Application
-  APP_NAME: gestion-trajet            # Nom de l'application
-  DEPLOYMENT_NAME: gestion-trajet-deployment  # Nom du déploiement Kubernetes
-  SERVICE_NAME: gestion-trajet-service        # Nom du service Kubernetes
-  CONTAINER_PORT: 80                 # Port exposé par le container
-  SERVICE_PORT: 80                   # Port exposé par le service
-  
-  # Configuration Terraform
-  TERRAFORM_VERSION: 1.5.5           # Version de Terraform à utiliser
-  TF_VAR_replica_count: 3            # Nombre de réplicas pour le déploiement
+  APP_NAME: gestion-trajet
+  DEPLOYMENT_NAME: gestion-trajet-deployment
+  SERVICE_NAME: gestion-trajet-service
+  CONTAINER_PORT: 80
+  SERVICE_PORT: 80
   
   # Configuration Monitoring
-  PROMETHEUS_PORT: 9090      # Port pour Prometheus
-  GRAFANA_PORT: 3000         # Port pour Grafana
-  GRAFANA_ADMIN_PASSWORD: rabaa123  # Mot de passe admin Grafana
+  PROMETHEUS_PORT: 9090
+  GRAFANA_PORT: 3000
+  GRAFANA_ADMIN_PASSWORD: rabaa123
   
   # Configuration SonarQube
-  SONAR_HOST_URL: http://localhost:9000  # URL pour SonarQube
+  SONAR_HOST_URL: http://localhost:9000
   
   # Configuration Email
-  YOUR_EMAIL: elmbarkirabea@gmail.com    # Email pour les notifications
-  EMAIL_FROM: "GitHub Actions <actions@github.com>"  # Expéditeur des emails
+  YOUR_EMAIL: elmbarkirabea@gmail.com
+  EMAIL_FROM: "GitHub Actions <actions@github.com>"
 
 jobs:
-  # Premier job : Installation et tests
+  # 1er job: build image docker
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🛎️ Checkout du code
+        uses: actions/checkout@v3
+
+      - name: 🔑 Connexion à Docker Hub 
+        run: echo "${{ secrets.DOCKER_TOKEN }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+
+      - name: 🔨 Construire l'image Docker
+        run: |
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/gestion_trajet:latest .
+      - name: 🚀 Pousser l'image sur Docker Hub
+        run: |
+          docker push ${{ secrets.DOCKER_USERNAME }}/gestion_trajet:latest
+
+  # 2ème job: tests
   setup-and-test:
     name: "1. Installation et Tests"
-    runs-on: ubuntu-latest  # Exécuté sur une machine Ubuntu
+    runs-on: ubuntu-latest
     
     steps:
-      # Étape 1: Récupération du code source
       - name: "🛎️ Checkout du code"
-        uses: actions/checkout@v4.1.1  # Action officielle pour checkout le code
+        uses: actions/checkout@v4.1.1
 
-      # Étape 2: Configuration de Node.js
       - name: "⎔ Configurer Node.js"
         uses: actions/setup-node@v3
         with:
-          node-version: 20  # Version de Node.js
-          cache: 'npm'      # Active le cache npm pour accélérer les builds
+          node-version: 20
+          cache: 'npm'
 
-      # Étape 3: Installation des dépendances
       - name: "📦 Installer les dépendances"
-        run: npm ci  # Installation précise des dépendances (comme package-lock.json)
+        run: npm ci
 
-      # Étape 4: Exécution des tests unitaires
       - name: "🧪 Tests Unitaires"
         run: npm run test:unit
         env:
-          NODE_ENV: test  # Définit l'environnement comme "test"
+          NODE_ENV: test
 
-      # Étape 5: Exécution des tests d'intégration
       - name: "🔗 Tests d'Intégration"
         run: npm run test:integration
         env:
-          DB_HOST: localhost  # Configuration de la base de données de test
+          DB_HOST: localhost
           DB_PORT: 5432
           DB_USER: testuser
           DB_PASSWORD: testpass
           NODE_ENV: test
 
-      # Étape 6: Build de l'application
       - name: "🛠️ Build de l'application"
-        run: npm run build  # Compilation de l'application
+        run: npm run build
 
-  # Deuxième job : Analyse de code avec SonarQube
+  # 3ème job: Analyse SonarQube
   sonarqube-analysis:
     name: "2. Analyse SonarQube"
-    needs: setup-and-test  # Dépend du job setup-and-test
+    needs: setup-and-test
     runs-on: ubuntu-latest
-    timeout-minutes: 30  # Timeout après 30 minutes
+    timeout-minutes: 30
     
     steps:
-      # Étape 1: Checkout du code
       - name: "🛎️ Checkout du code"
         uses: actions/checkout@v4.1.1
         with:
-          fetch-depth: 0  # Récupère tout l'historique git (nécessaire pour SonarQube)
+          fetch-depth: 0
 
-      # Étape 2: Démarrage du conteneur SonarQube
       - name: "🐳 Démarrer SonarQube"
         run: |
           docker run -d \
@@ -101,13 +103,11 @@ jobs:
             -p 9000:9000 \
             -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true \
             sonarqube:9.9.1-community
-          # Attente que SonarQube soit prêt
           timeout 300 bash -c 'while ! curl -sSf ${{ env.SONAR_HOST_URL }}/api/system/status | grep -q "\"status\":\"UP\""; do
             sleep 10
             echo "En attente du démarrage..."
           done'
 
-      # Étape 3: Génération du token SonarQube
       - name: "🔑 Générer token SonarQube"
         run: |
           SONAR_TOKEN=$(curl -sS -u admin:admin \
@@ -115,9 +115,8 @@ jobs:
             -d "name=github-action-$(date +%s)" \
             | jq -r '.token')
           echo "SONAR_TOKEN=$SONAR_TOKEN" >> $GITHUB_ENV
-          echo "::add-mask::$SONAR_TOKEN"  # Masque le token dans les logs
+          echo "::add-mask::$SONAR_TOKEN"
 
-      # Étape 4: Exécution de l'analyse SonarQube
       - name: "🔍 Exécuter analyse SonarQube"
         uses: SonarSource/sonarqube-scan-action@v4
         env:
@@ -129,78 +128,54 @@ jobs:
             -Dsonar.sources=src
             -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
 
-      # Étape 5: Nettoyage (toujours exécutée même en cas d'échec)
       - name: "🧹 Nettoyer SonarQube"
         if: always()
-        run: docker rm -f sonarqube || true  # Supprime le conteneur SonarQube
+        run: docker rm -f sonarqube || true
 
-  # Troisième job : Déploiement Docker et Kubernetes
-  docker-deploy:
-    name: "3. Déploiement Docker et Kubernetes"
-    needs: sonarqube-analysis  # Dépend du job sonarqube-analysis
+  # 4ème job: Déploiement Kubernetes
+  kubernetes-deploy:
+    name: "3. Déploiement Kubernetes"
+    needs: sonarqube-analysis
     runs-on: ubuntu-latest
     
     steps:
-      # Étape 1: Checkout du code
       - name: "🛎️ Checkout du code"
         uses: actions/checkout@v4.1.1
 
-      # Étape 2: Authentification à Docker Hub
       - name: "🔐 Login Docker Hub"
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}  # Utilise un secret GitHub
+          username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
 
-      # Étape 3: Build et push de l'image Docker
-      - name: "🏗️ Build Docker"
-        uses: docker/build-push-action@v4
-        with:
-          context: .  # Répertoire de build
-          push: true  # Push l'image après le build
-          tags: |
-            ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.APP_NAME }}:${{ github.sha }}
-            ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.APP_NAME }}:latest
-
-      # Étape 4: Installation de K3s (Kubernetes léger)
       - name: "🖥️ Installer K3s"
         run: |
           curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=${{ env.K3S_VERSION }} sh -
-          sudo chmod 644 /etc/rancher/k3s/k3s.yaml  # Ajuste les permissions
+          sudo chmod 644 /etc/rancher/k3s/k3s.yaml
 
-      # Étape 5: Configuration de kubectl
       - name: "⚙️ Configurer kubectl"
         run: |
           mkdir -p $HOME/.kube
           sudo cp /etc/rancher/k3s/k3s.yaml $HOME/.kube/config
           sudo chown $(id -u):$(id -g) $HOME/.kube/config
 
-      # Étape 6: Nettoyage avant Terraform
-      - name: "🧹 Nettoyer avant Terraform"
+      - name: "🧹 Nettoyer avant déploiement"
         run: |
-          # Supprime les ressources existantes pour éviter les conflits
           kubectl delete deployment ${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }} --ignore-not-found=true
           kubectl delete service ${{ env.SERVICE_NAME }} -n ${{ env.NAMESPACE }} --ignore-not-found=true
           kubectl delete configmap app-config -n ${{ env.NAMESPACE }} --ignore-not-found=true
           kubectl delete secret database-credentials -n ${{ env.NAMESPACE }} --ignore-not-found=true
 
-      # Étape 7: Installation de Terraform
-      - name: "⚙️ Installer Terraform"
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-
-      # Étape 8: Déploiement avec Terraform
-      - name: "🚀 Déployer avec Terraform"
-        working-directory: ./infra
-        env:
-          TF_VAR_docker_username: ${{ secrets.DOCKER_USERNAME }}
-          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
-          TF_VAR_image_tag: ${{ github.sha }}
+      - name: "🚀 Appliquer les configurations Kubernetes"
         run: |
-          terraform init
-          terraform validate
-          terraform apply -auto-approve
+          # Créer le namespace s'il n'existe pas
+          kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+          
+          # Appliquer les fichiers Kubernetes
+          kubectl apply -f ./k8s -n ${{ env.NAMESPACE }}
+          
+          # Vérifier le déploiement
+          kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }} --timeout=300s
 
       - name: "🐞 Debug des Pods"
         if: always()
@@ -214,37 +189,18 @@ jobs:
           echo "=== Événements ==="
           kubectl get events -n ${{ env.NAMESPACE }} --sort-by='.metadata.creationTimestamp'
 
-      - name: "📧 Notification d'échec"
-        if: failure()
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          username: ${{ secrets.EMAIL_USERNAME }}
-          password: ${{ secrets.EMAIL_PASSWORD }}
-          from: ${{ env.EMAIL_FROM }}
-          to: ${{ env.YOUR_EMAIL }}
-          subject: "Échec de déploiement - ${{ env.APP_NAME }}"
-          body: |
-            Commit: ${{ github.sha }}
-            Logs des pods:
-            $(kubectl logs -n ${{ env.NAMESPACE }} -l app=${{ env.APP_NAME }} --all-containers=true --tail=50)
-
-      # Étape 9: Vérification du déploiement
       - name: "🔍 Vérifier le déploiement"
         run: |
           echo "=== Ressources déployées ==="
-          kubectl get all -n ${{ env.NAMESPACE }}  # Liste toutes les ressources
+          kubectl get all -n ${{ env.NAMESPACE }}
           
           echo "=== Détails du déploiement ==="
           kubectl describe deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }}
           
           echo "=== Test de connectivité ==="
-          # Port-forward temporaire pour tester le service
           kubectl port-forward svc/${{ env.SERVICE_NAME }} ${{ env.SERVICE_PORT }}:${{ env.CONTAINER_PORT }} -n ${{ env.NAMESPACE }} >/dev/null 2>&1 &
-          sleep 10  # Attente que le port-forward soit actif
+          sleep 10
           
-          # Test de santé de l'application
           if curl -sSf http://localhost:${{ env.SERVICE_PORT }}/healthz; then
             echo "✅ Application accessible"
           else
@@ -253,9 +209,8 @@ jobs:
             exit 1
           fi
 
-      # Étape 10: Rollback en cas d'échec
       - name: "🔄 Rollback en cas d'échec"
-        if: failure()  # Exécuté seulement en cas d'échec
+        if: failure()
         run: |
           echo "=== Lancement du rollback ==="
           kubectl rollout undo deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }}
@@ -263,7 +218,6 @@ jobs:
           kubectl get pods -n ${{ env.NAMESPACE }}
           exit 1
 
-      # Étape 11: Notification d'échec par email
       - name: "📧 Notification d'échec"
         if: failure()
         uses: dawidd6/action-send-mail@v3
@@ -286,10 +240,10 @@ jobs:
             
             Un rollback a été effectué.
 
-  # Quatrième job : Déploiement du monitoring
+  # 5ème job: Déploiement du monitoring
   monitoring-deploy:
     name: "4. Déploiement Monitoring"
-    needs: docker-deploy
+    needs: kubernetes-deploy
     runs-on: ubuntu-latest
     env:
       PROMETHEUS_PORT: 9090
@@ -319,14 +273,12 @@ jobs:
       - name: "🔍 Vérifier les services"
         working-directory: ./monitoring
         run: |
-          # Vérifie que tous les services sont en cours d'exécution
           if ! docker-compose ps | grep -q "Up"; then
             echo "❌ Certains services ne sont pas démarrés"
             docker-compose logs
             exit 1
           fi
           
-          # Vérifie spécifiquement chaque service
           SERVICES=("nodejs-app:8080" "prometheus:9090" "grafana:3000")
           for service in "${SERVICES[@]}"; do
             if ! docker-compose ps | grep "$service" | grep -q "Up"; then
@@ -341,7 +293,6 @@ jobs:
         env:
           GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
         run: |
-          # Configuration de la source de données Prometheus
           until curl -s http://localhost:$GRAFANA_PORT/api/health; do
             echo "En attente de Grafana..."
             sleep 5
@@ -363,19 +314,16 @@ jobs:
 
       - name: "🧪 Tests de fonctionnement"
         run: |
-          # Test Prometheus
           if ! curl -s http://localhost:$PROMETHEUS_PORT/-/ready | grep -q "Prometheus"; then
             echo "❌ Prometheus non prêt"
             exit 1
           fi
           
-          # Test Node.js metrics
           if ! curl -s http://localhost:$NODEJS_PORT/metrics | grep -q "process_cpu_seconds_total"; then
             echo "❌ Métriques Node.js non disponibles"
             exit 1
           fi
           
-          # Test Grafana
           if ! curl -s http://localhost:$GRAFANA_PORT/api/health | grep -q "\"database\":\"ok\""; then
             echo "❌ Grafana non prêt"
             exit 1

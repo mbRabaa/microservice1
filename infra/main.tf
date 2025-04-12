@@ -1,4 +1,4 @@
-# 1. Namespace dédié
+
 resource "kubernetes_namespace" "microservice" {
   metadata {
     name = "microservice"
@@ -9,7 +9,36 @@ resource "kubernetes_namespace" "microservice" {
   }
 }
 
-# 2. Configuration de l'application
+resource "helm_release" "postgresql" {
+  name      = "postgresql"
+  chart     = "./postgresql-16.6.3.tgz" # Chemin local garantissant le téléchargement
+  namespace = kubernetes_namespace.microservice.metadata[0].name
+  
+  # Configuration via values.yaml intégré
+  values = [
+    <<-EOT
+    auth:
+      database: gestion_trajet_db
+      username: tunisbus
+      password: "0000"
+    primary:
+      persistence:
+        enabled: true
+        size: 8Gi
+      resources:
+        requests:
+          memory: "256Mi"
+          cpu: "250m"
+    EOT
+  ]
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  timeout = 900 # 15 minutes pour les clusters lents
+}
+
 resource "kubernetes_config_map" "app_config" {
   metadata {
     name      = "app-config"
@@ -17,18 +46,18 @@ resource "kubernetes_config_map" "app_config" {
   }
 
   data = {
-    "app_config.yml" = <<-EOT
-      logging:
-        level: INFO
-      server:
-        port: 8080
-        health_check_path: /health
-        readiness_path: /ready
+    "application.yml" = <<-EOT
+    spring:
+      datasource:
+        url: jdbc:postgresql://${helm_release.postgresql.name}.${kubernetes_namespace.microservice.metadata[0].name}.svc.cluster.local:5432/${var.db_name}
+        username: ${var.db_user}
+        password: ${var.db_password}
+    server:
+      port: 8080
     EOT
   }
 }
 
-# 3. Secrets de la base de données
 resource "kubernetes_secret" "db_creds" {
   metadata {
     name      = "database-credentials"
@@ -36,28 +65,26 @@ resource "kubernetes_secret" "db_creds" {
   }
 
   data = {
-    db_host     = base64encode("postgres-service.microservice.svc.cluster.local")
-    db_password = base64encode(var.db_password)
-    db_user     = base64encode("app_user")
+    db_host     = "${helm_release.postgresql.name}.${kubernetes_namespace.microservice.metadata[0].name}.svc.cluster.local"
+    db_name     = var.db_name
+    db_user     = var.db_user
+    db_password = var.db_password
   }
 
   type = "Opaque"
 }
 
-# 4. Déploiement principal (version optimisée)
 resource "kubernetes_deployment" "app" {
   metadata {
     name      = "gestion-trajet-deployment"
     namespace = kubernetes_namespace.microservice.metadata[0].name
     labels = {
-      app     = "gestion-trajet"
-      version = var.image_tag
+      app = "gestion-trajet"
     }
   }
 
   spec {
     replicas = var.replica_count
-
     strategy {
       type = "RollingUpdate"
       rolling_update {
@@ -75,30 +102,22 @@ resource "kubernetes_deployment" "app" {
     template {
       metadata {
         labels = {
-          app     = "gestion-trajet"
-          monitor = "true"
-        }
-        annotations = {
-          "prometheus.io/scrape" = "true"
-          "prometheus.io/port"   = "8080"
-          "prometheus.io/path"   = "/metrics"
+          app = "gestion-trajet"
         }
       }
 
       spec {
-        container {
-          name  = "app-container"
-          image = "${var.docker_username}/gestion-trajet:${var.image_tag}"
-          image_pull_policy = "IfNotPresent"
-          
-          port {
-            name           = "http"
-            container_port = 8080
-          }
+        init_container {
+          name    = "wait-for-db"
+          image   = "busybox:1.28"
+          command = ["sh", "-c", "until nc -z ${helm_release.postgresql.name} 5432; do sleep 2; done"]
+        }
 
-          env {
-            name  = "PORT"
-            value = "8080"
+        container {
+          name  = "app"
+          image = "${var.docker_registry}/${var.docker_image}:${var.image_tag}"
+          port {
+            container_port = 8080
           }
 
           env_from {
@@ -107,16 +126,10 @@ resource "kubernetes_deployment" "app" {
             }
           }
 
-          env_from {
-            secret_ref {
-              name = kubernetes_secret.db_creds.metadata[0].name
-            }
-          }
-
           resources {
             requests = {
-              cpu    = "100m"
-              memory = "128Mi"
+              cpu    = "200m"
+              memory = "256Mi"
             }
             limits = {
               cpu    = "500m"
@@ -129,29 +142,8 @@ resource "kubernetes_deployment" "app" {
               path = "/health"
               port = 8080
             }
-            initial_delay_seconds = 45  # Augmenté pour les applications lentes
+            initial_delay_seconds = 30
             period_seconds        = 10
-            failure_threshold     = 3
-          }
-
-          readiness_probe {
-            http_get {
-              path = "/ready"  # Endpoint distinct pour readiness
-              port = 8080
-            }
-            initial_delay_seconds = 5
-            period_seconds        = 5
-            success_threshold     = 1
-            failure_threshold     = 3
-          }
-
-          startup_probe {
-            http_get {
-              path = "/health"
-              port = 8080
-            }
-            failure_threshold = 30  # 30 tentatives
-            period_seconds    = 5   # Intervalle de 5s
           }
         }
       }
@@ -159,14 +151,10 @@ resource "kubernetes_deployment" "app" {
   }
 }
 
-# 5. Service d'exposition
 resource "kubernetes_service" "app" {
   metadata {
     name      = "gestion-trajet-service"
     namespace = kubernetes_namespace.microservice.metadata[0].name
-    annotations = {
-      "metallb.universe.tf/address-pool" = "default"
-    }
   }
 
   spec {
@@ -175,32 +163,11 @@ resource "kubernetes_service" "app" {
     }
 
     port {
-      name        = "http"
       port        = 80
       target_port = 8080
-      protocol    = "TCP"
     }
 
     type = "LoadBalancer"
   }
 }
 
-# 6. Autoscaling Horizontal (optionnel)
-resource "kubernetes_horizontal_pod_autoscaler" "app" {
-  metadata {
-    name      = "gestion-trajet-hpa"
-    namespace = kubernetes_namespace.microservice.metadata[0].name
-  }
-
-  spec {
-    min_replicas = 1
-    max_replicas = 5
-    target_cpu_utilization_percentage = 80
-
-    scale_target_ref {
-      api_version = "apps/v1"
-      kind        = "Deployment"
-      name        = kubernetes_deployment.app.metadata[0].name
-    }
-  }
-}
