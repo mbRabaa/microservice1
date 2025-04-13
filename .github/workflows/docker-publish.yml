@@ -166,17 +166,26 @@ jobs:
           kubectl delete configmap app-config -n ${{ env.NAMESPACE }} --ignore-not-found=true
           kubectl delete secret database-credentials -n ${{ env.NAMESPACE }} --ignore-not-found=true
 
-      - name: "🚀 Appliquer les configurations Kubernetes"
+          - name: Deploy infrastructure
+          run: |
+            kubectl create ns ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+            kubectl apply -f k8s/infra/coredns -n kube-system
+            kubectl apply -f k8s/app/db -n ${{ env.NAMESPACE }}
+  
+      - name: Deploy application
         run: |
-          # Créer le namespace s'il n'existe pas
-          kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
-          
-          # Appliquer les fichiers Kubernetes
-          kubectl apply -f ./k8s -n ${{ env.NAMESPACE }}
-          
-          # Vérifier le déploiement
-          kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }} --timeout=600s
-
+            kubectl apply -f k8s/app -n ${{ env.NAMESPACE }}
+            kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }} --timeout=300s
+  
+      - name: Verify deployment
+        run: |
+            kubectl port-forward svc/${{ env.SERVICE_NAME }} 8080:${{ env.CONTAINER_PORT }} -n ${{ env.NAMESPACE }} &
+            sleep 10
+            curl -sSf http://localhost:8080/health || {
+              echo "Health check failed"
+              kubectl logs -n ${{ env.NAMESPACE }} -l app=${{ env.APP_NAME }} --tail=100
+              exit 1
+            }
       - name: "🐞 Debug des Pods"
         if: always()
         run: |
