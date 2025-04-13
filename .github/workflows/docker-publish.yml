@@ -142,18 +142,31 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
 
-      - name: "🖥️ Installer K3s avec stockage local"
+      - name: "🖥️ Installer et configurer K3s"
         run: |
+          # Installer K3s
           curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=${{ env.K3S_VERSION }} sh -
+          
+          # Attendre que K3s soit prêt
+          echo "=== Attente du démarrage de K3s ==="
+          for i in {1..30}; do
+            if sudo k3s kubectl get nodes; then
+              break
+            fi
+            sleep 5
+            echo "Attente du démarrage de K3s (tentative $i/30)..."
+          done
+          
+          # Configurer le stockage local
+          sudo k3s kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/master/deploy/local-path-storage.yaml --validate=false
           sudo chmod 644 /etc/rancher/k3s/k3s.yaml
-          kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/master/deploy/local-path-storage.yaml
-          sudo k3s kubectl get nodes
 
       - name: "⚙️ Configurer kubectl"
         run: |
           mkdir -p $HOME/.kube
           sudo cp /etc/rancher/k3s/k3s.yaml $HOME/.kube/config
           sudo chown $(id -u):$(id -g) $HOME/.kube/config
+          export KUBECONFIG=$HOME/.kube/config
           kubectl cluster-info
 
       - name: "🧹 Nettoyer avant déploiement"
@@ -165,35 +178,25 @@ jobs:
         run: |
           kubectl create ns ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: "🗄️ Déployer PostgreSQL avec vérification PVC"
+      - name: "🗄️ Déployer PostgreSQL"
         run: |
-          echo "=== Déploiement du PVC ==="
+          # Appliquer les ressources PostgreSQL
           kubectl apply -f k8s/app/db/postgres-pvc.yaml -n ${{ env.NAMESPACE }}
           
-          echo "=== Vérification du PVC ==="
-          for i in {1..30}; do
-            PVC_STATUS=$(kubectl get pvc postgres-pvc -n ${{ env.NAMESPACE }} -o jsonpath='{.status.phase}')
-            [ "$PVC_STATUS" = "Bound" ] && break
-            sleep 5
-            echo "Attente du binding du PVC (tentative $i/30)..."
-          done
+          # Attendre que le PVC soit lié
+          echo "=== Attente du binding du PVC ==="
+          kubectl wait --for=jsonpath='{.status.phase}'=Bound pvc/postgres-pvc -n ${{ env.NAMESPACE }} --timeout=120s
           
-          if [ "$PVC_STATUS" != "Bound" ]; then
-            echo "❌ Échec du binding du PVC"
-            kubectl describe pvc postgres-pvc -n ${{ env.NAMESPACE }}
-            exit 1
-          fi
-          
-          echo "=== Déploiement PostgreSQL ==="
+          # Déployer PostgreSQL
           kubectl apply -f k8s/app/db/postgres-deployment.yaml -n ${{ env.NAMESPACE }}
           kubectl apply -f k8s/app/db/postgres-service.yaml -n ${{ env.NAMESPACE }}
           
-          echo "=== Attente du démarrage de PostgreSQL ==="
+          # Attendre que PostgreSQL soit prêt
           kubectl rollout status deployment/postgres -n ${{ env.NAMESPACE }} --timeout=300s
 
       - name: "🔍 Valider la connexion PostgreSQL"
         run: |
-          echo "=== Test de connexion à PostgreSQL ==="
+          echo "=== Test de connexion PostgreSQL ==="
           POD_NAME=$(kubectl get pods -n ${{ env.NAMESPACE }} -l app=postgres -o jsonpath='{.items[0].metadata.name}')
           kubectl exec -n ${{ env.NAMESPACE }} $POD_NAME -- \
             pg_isready -U tunisbus -h localhost -d gestion_trajet --timeout=60 || {
@@ -210,15 +213,13 @@ jobs:
 
       - name: "🩺 Vérifier la santé de l'application"
         run: |
-          echo "=== Port-forwarding temporaire ==="
+          echo "=== Test de l'application ==="
           kubectl port-forward svc/${{ env.SERVICE_NAME }} 8080:${{ env.CONTAINER_PORT }} -n ${{ env.NAMESPACE }} >/dev/null 2>&1 &
           sleep 15
-          
-          echo "=== Test du endpoint /health ==="
           if curl -sSf http://localhost:8080/health; then
             echo "✅ Application fonctionnelle"
           else
-            echo "❌ L'application ne répond pas"
+            echo "❌ Échec de connexion à l'application"
             kubectl logs -n ${{ env.NAMESPACE }} -l app=${{ env.APP_NAME }} --tail=100
             exit 1
           fi
@@ -228,15 +229,10 @@ jobs:
         run: |
           echo "=== Logs PostgreSQL ==="
           kubectl logs -n ${{ env.NAMESPACE }} -l app=postgres --tail=100 || true
-          
           echo "=== Logs Application ==="
           kubectl logs -n ${{ env.NAMESPACE }} -l app=${{ env.APP_NAME }} --tail=100 || true
-          
-          echo "=== Événements Kubernetes ==="
+          echo "=== Événements ==="
           kubectl get events -n ${{ env.NAMESPACE }} --sort-by='.lastTimestamp' || true
-          
-          echo "=== Description des Pods ==="
-          kubectl describe pods -n ${{ env.NAMESPACE }} || true
 
       - name: "📧 Notification d'échec"
         if: failure()
@@ -258,10 +254,6 @@ jobs:
     name: "4. Déploiement Monitoring"
     needs: kubernetes-deploy
     runs-on: ubuntu-latest
-    env:
-      PROMETHEUS_PORT: 9090
-      GRAFANA_PORT: 3000
-      NODEJS_PORT: 8081
     steps:
       - name: "🛎️ Checkout du code"
         uses: actions/checkout@v4
@@ -276,8 +268,6 @@ jobs:
         run: |
           docker-compose up -d --build
           sleep 30
-          
-          echo "=== Configuration de Grafana ==="
           curl -X POST "http://localhost:3000/api/datasources" \
             -H "Content-Type: application/json" \
             -u "admin:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
