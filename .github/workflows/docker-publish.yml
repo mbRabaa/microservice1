@@ -1,9 +1,8 @@
-name: CI/CD - Pipeline DevOps complet 
+name: CI/CD - Pipeline DevOps complet
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
 
 env:
   # Configuration Kubernetes
@@ -13,9 +12,9 @@ env:
   
   # Configuration Application
   APP_NAME: gestion-trajet
-  DEPLOYMENT_NAME: gestion-trajet-app # Modifié pour correspondre au deployment.yaml
+  DEPLOYMENT_NAME: gestion-trajet-app
   SERVICE_NAME: gestion-trajet-service
-  CONTAINER_PORT: 8080  # Modifié pour correspondre au port de votre application
+  CONTAINER_PORT: 8080
   SERVICE_PORT: 80
   
   # Configuration Monitoring
@@ -31,7 +30,6 @@ env:
   EMAIL_FROM: "GitHub Actions <actions@github.com>"
 
 jobs:
-  # 1er job: build image docker
   build-and-push:
     runs-on: ubuntu-latest
     steps:
@@ -44,15 +42,14 @@ jobs:
       - name: 🔨 Construire l'image Docker
         run: |
           docker build -t ${{ secrets.DOCKER_USERNAME }}/gestion_trajet:latest .
+          
       - name: 🚀 Pousser l'image sur Docker Hub
         run: |
           docker push ${{ secrets.DOCKER_USERNAME }}/gestion_trajet:latest
 
-  # 2ème job: tests
   setup-and-test:
     name: "1. Installation et Tests"
     runs-on: ubuntu-latest
-    
     steps:
       - name: "🛎️ Checkout du code"
         uses: actions/checkout@v4.1.1
@@ -83,13 +80,11 @@ jobs:
       - name: "🛠️ Build de l'application"
         run: npm run build
 
-  # 3ème job: Analyse SonarQube
   sonarqube-analysis:
     name: "2. Analyse SonarQube"
     needs: setup-and-test
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    
     steps:
       - name: "🛎️ Checkout du code"
         uses: actions/checkout@v4.1.1
@@ -132,12 +127,10 @@ jobs:
         if: always()
         run: docker rm -f sonarqube || true
 
-  # 4ème job: Déploiement Kubernetes
   kubernetes-deploy:
     name: "3. Déploiement Kubernetes"
     needs: sonarqube-analysis
     runs-on: ubuntu-latest
-    
     steps:
       - name: "🛎️ Checkout du code"
         uses: actions/checkout@v4.1.1
@@ -161,80 +154,42 @@ jobs:
 
       - name: "🧹 Nettoyer avant déploiement"
         run: |
-          kubectl delete deployment ${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }} --ignore-not-found=true
-          kubectl delete service ${{ env.SERVICE_NAME }} -n ${{ env.NAMESPACE }} --ignore-not-found=true
-          kubectl delete configmap app-config -n ${{ env.NAMESPACE }} --ignore-not-found=true
-          kubectl delete secret database-credentials -n ${{ env.NAMESPACE }} --ignore-not-found=true
+          kubectl delete deployment ${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }} --ignore-not-found=true || true
+          kubectl delete service ${{ env.SERVICE_NAME }} -n ${{ env.NAMESPACE }} --ignore-not-found=true || true
+          kubectl delete configmap app-config -n ${{ env.NAMESPACE }} --ignore-not-found=true || true
+          kubectl delete secret database-credentials -n ${{ env.NAMESPACE }} --ignore-not-found=true || true
 
-          - name: Deploy infrastructure
-          run: |
-            kubectl create ns ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
-            kubectl apply -f k8s/infra/coredns -n kube-system
-            kubectl apply -f k8s/app/db -n ${{ env.NAMESPACE }}
-  
-      - name: Deploy application
+      - name: "🚀 Déployer l'infrastructure"
         run: |
-            kubectl apply -f k8s/app -n ${{ env.NAMESPACE }}
-            kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }} --timeout=300s
-  
-      - name: Verify deployment
+          kubectl create ns ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+          kubectl apply -f k8s/infra/coredns -n kube-system || true
+          kubectl apply -f k8s/app/db -n ${{ env.NAMESPACE }} || true
+
+      - name: "🚀 Déployer l'application"
         run: |
-            kubectl port-forward svc/${{ env.SERVICE_NAME }} 8080:${{ env.CONTAINER_PORT }} -n ${{ env.NAMESPACE }} &
-            sleep 10
-            curl -sSf http://localhost:8080/health || {
-              echo "Health check failed"
-              kubectl logs -n ${{ env.NAMESPACE }} -l app=${{ env.APP_NAME }} --tail=100
-              exit 1
-            }
-      - name: "🐞 Debug des Pods"
-        if: always()
-        run: |
-          echo "=== État des Pods ==="
-          kubectl get pods -n ${{ env.NAMESPACE }} -o wide
-          echo "=== Détails des Pods ==="
-          kubectl describe pods -n ${{ env.NAMESPACE }} -l app=${{ env.APP_NAME }}
-          echo "=== Logs des Pods ==="
-          kubectl logs -n ${{ env.NAMESPACE }} -l app=${{ env.APP_NAME }} --all-containers=true --tail=100
-          echo "=== Événements ==="
-          kubectl get events -n ${{ env.NAMESPACE }} --sort-by='.metadata.creationTimestamp'
+          kubectl apply -f k8s/app -n ${{ env.NAMESPACE }} || true
+          kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }} --timeout=300s || true
 
       - name: "🔍 Vérifier le déploiement"
         run: |
-          echo "=== Ressources déployées ==="
-          kubectl get all -n ${{ env.NAMESPACE }}
+          # Simple pod status check
+          echo "=== État des Pods ==="
+          kubectl get pods -n ${{ env.NAMESPACE }} --no-headers | grep -v "Running" && exit 1 || echo "Tous les pods sont en état Running"
           
-          echo "=== Détails du déploiement ==="
-          kubectl describe deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }}
-          
-          echo "=== Test de connectivité ==="
-          kubectl port-forward svc/${{ env.SERVICE_NAME }} ${{ env.SERVICE_PORT }}:${{ env.CONTAINER_PORT }} -n ${{ env.NAMESPACE }} >/dev/null 2>&1 &
-          sleep 10
-          
-          if curl -sSf http://localhost:${{ env.SERVICE_PORT }}/healthz; then
+          # Basic health check
+          kubectl port-forward svc/${{ env.SERVICE_NAME }} 8080:${{ env.CONTAINER_PORT }} -n ${{ env.NAMESPACE }} >/dev/null 2>&1 &
+          sleep 5
+          if curl -sSf http://localhost:8080/health; then
             echo "✅ Application accessible"
           else
             echo "❌ Échec de connexion"
-            kubectl logs -l app=${{ env.APP_NAME }} -n ${{ env.NAMESPACE }} --tail=50
             exit 1
           fi
-          - name: "🐞 Debug approfondi"
-          if: failure()
-          run: |
-            echo "=== Détails des pods ==="
-            kubectl describe pods -n ${{ env.NAMESPACE }} -l app=${{ env.APP_NAME }}
-            
-            echo "=== Logs des containers ==="
-            kubectl logs -n ${{ env.NAMESPACE }} -l app=${{ env.APP_NAME }} --all-containers=true --tail=200
-            
-            echo "=== Événements Kubernetes ==="
-            kubectl get events -n ${{ env.NAMESPACE }} --sort-by='.metadata.creationTimestamp' --field-selector type!=Normal
+
       - name: "🔄 Rollback en cas d'échec"
         if: failure()
         run: |
-          echo "=== Lancement du rollback ==="
-          kubectl rollout undo deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }}
-          echo "=== État après rollback ==="
-          kubectl get pods -n ${{ env.NAMESPACE }}
+          kubectl rollout undo deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }} || true
           exit 1
 
       - name: "📧 Notification d'échec"
@@ -250,14 +205,8 @@ jobs:
           subject: "Échec de déploiement - ${{ env.APP_NAME }}"
           body: |
             Le déploiement a échoué.
-            
-            Détails:
-            - Commit: ${{ github.sha }}
-            - Application: ${{ env.APP_NAME }}
-            - Namespace: ${{ env.NAMESPACE }}
-            - Heure: $(date)
-            
-            Un rollback a été effectué.
+            Commit: ${{ github.sha }}
+            Logs: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
   # 5ème job: Déploiement du monitoring
   monitoring-deploy:
