@@ -165,6 +165,20 @@ jobs:
           kubectl apply -f k8s/infra/coredns -n kube-system || true
           kubectl apply -f k8s/app/db -n ${{ env.NAMESPACE }} || true
 
+      - name: "⏳ Attendre que PostgreSQL soit prêt"
+        timeout-minutes: 5
+        run: |
+          echo "=== Attente du démarrage de PostgreSQL ==="
+          kubectl wait --for=condition=Ready pod -n ${{ env.NAMESPACE }} -l app=postgres --timeout=300s
+          
+          echo "=== Vérification de la connexion PostgreSQL ==="
+          kubectl exec -n ${{ env.NAMESPACE }} $(kubectl get pods -n ${{ env.NAMESPACE }} -l app=postgres -o jsonpath='{.items[0].metadata.name}') -- \
+            pg_isready -U ${{ secrets.DB_USER }} -h localhost -d ${{ secrets.DB_NAME }} --timeout=60 || {
+              echo "❌ Échec de connexion à PostgreSQL"
+              kubectl logs -n ${{ env.NAMESPACE }} $(kubectl get pods -n ${{ env.NAMESPACE }} -l app=postgres -o jsonpath='{.items[0].metadata.name}')
+              exit 1
+            }
+
       - name: "🚀 Déployer l'application"
         run: |
           kubectl apply -f k8s/app -n ${{ env.NAMESPACE }} || true
@@ -172,19 +186,24 @@ jobs:
 
       - name: "🔍 Vérifier le déploiement"
         run: |
-          # Simple pod status check
-          echo "=== État des Pods ==="
-          kubectl get pods -n ${{ env.NAMESPACE }} --no-headers | grep -v "Running" && exit 1 || echo "Tous les pods sont en état Running"
+          echo "=== État final des Pods ==="
+          kubectl get pods -n ${{ env.NAMESPACE }} -o wide
           
-          # Basic health check
+          echo "=== Vérification de l'application ==="
           kubectl port-forward svc/${{ env.SERVICE_NAME }} 8080:${{ env.CONTAINER_PORT }} -n ${{ env.NAMESPACE }} >/dev/null 2>&1 &
-          sleep 5
+          sleep 15
           if curl -sSf http://localhost:8080/health; then
             echo "✅ Application accessible"
           else
-            echo "❌ Échec de connexion"
+            echo "❌ Échec de connexion à l'application"
+            kubectl logs -n ${{ env.NAMESPACE }} -l app=${{ env.APP_NAME }} --tail=100
             exit 1
           fi
+
+      - name: "📜 Afficher les logs PostgreSQL en cas d'échec"
+        if: failure()
+        run: |
+          kubectl logs -n ${{ env.NAMESPACE }} $(kubectl get pods -n ${{ env.NAMESPACE }} -l app=postgres -o jsonpath='{.items[0].metadata.name}') --tail=100
 
       - name: "🔄 Rollback en cas d'échec"
         if: failure()
@@ -208,7 +227,6 @@ jobs:
             Commit: ${{ github.sha }}
             Logs: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
-  # 5ème job: Déploiement du monitoring
   monitoring-deploy:
     name: "4. Déploiement Monitoring"
     needs: kubernetes-deploy
@@ -217,7 +235,6 @@ jobs:
       PROMETHEUS_PORT: 9090
       GRAFANA_PORT: 3000
       NODEJS_PORT: 8081
-      
     steps:
       - name: "🛎️ Checkout du code"
         uses: actions/checkout@v4
@@ -227,88 +244,14 @@ jobs:
           sudo curl -L "https://github.com/docker/compose/releases/download/v2.23.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
           sudo chmod +x /usr/local/bin/docker-compose
 
-      - name: "🧹 Nettoyer l'environnement"
-        working-directory: ./monitoring
-        run: docker-compose down -v --remove-orphans || true
-
       - name: "🚀 Démarrer le monitoring"
         working-directory: ./monitoring
         run: |
           docker-compose up -d --build
-          echo "Attente du démarrage des services (30s)..."
           sleep 30
-
-      - name: "🔍 Vérifier les services"
-        working-directory: ./monitoring
-        run: |
-          if ! docker-compose ps | grep -q "Up"; then
-            echo "❌ Certains services ne sont pas démarrés"
-            docker-compose logs
-            exit 1
-          fi
           
-          SERVICES=("nodejs-app:8080" "prometheus:9090" "grafana:3000")
-          for service in "${SERVICES[@]}"; do
-            if ! docker-compose ps | grep "$service" | grep -q "Up"; then
-              echo "❌ Service $service non démarré"
-              exit 1
-            fi
-          done
-          echo "✅ Tous les services sont opérationnels"
-
-      - name: "📊 Configurer Grafana"
-        working-directory: ./monitoring
-        env:
-          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
-        run: |
-          until curl -s http://localhost:$GRAFANA_PORT/api/health; do
-            echo "En attente de Grafana..."
-            sleep 5
-          done
-          
-          curl -X POST "http://localhost:$GRAFANA_PORT/api/datasources" \
+          # Configuration Grafana
+          curl -X POST "http://localhost:3000/api/datasources" \
             -H "Content-Type: application/json" \
-            -u "admin:$GRAFANA_ADMIN_PASSWORD" \
-            -d '{
-              "name":"Prometheus",
-              "type":"prometheus",
-              "url":"http://prometheus:9090",
-              "access":"proxy",
-              "basicAuth":false,
-              "isDefault":true
-            }'
-          
-          echo "Configuration Grafana terminée"
-
-      - name: "🧪 Tests de fonctionnement"
-        run: |
-          if ! curl -s http://localhost:$PROMETHEUS_PORT/-/ready | grep -q "Prometheus"; then
-            echo "❌ Prometheus non prêt"
-            exit 1
-          fi
-          
-          if ! curl -s http://localhost:$NODEJS_PORT/metrics | grep -q "process_cpu_seconds_total"; then
-            echo "❌ Métriques Node.js non disponibles"
-            exit 1
-          fi
-          
-          if ! curl -s http://localhost:$GRAFANA_PORT/api/health | grep -q "\"database\":\"ok\""; then
-            echo "❌ Grafana non prêt"
-            exit 1
-          fi
-
-      - name: "📝 Générer un rapport"
-        working-directory: ./monitoring
-        run: |
-          echo "# Rapport de Monitoring" > monitoring-report.md
-          echo "## État des Services" >> monitoring-report.md
-          docker-compose ps >> monitoring-report.md
-          
-          echo "## Cibles Prometheus" >> monitoring-report.md
-          curl -s http://localhost:$PROMETHEUS_PORT/api/v1/targets | jq . >> monitoring-report.md
-          
-          echo "## Métriques Node.js" >> monitoring-report.md
-          curl -s http://localhost:$NODEJS_PORT/metrics | head -n 20 >> monitoring-report.md
-          
-          echo "Rapport généré :"
-          cat monitoring-report.md
+            -u "admin:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
+            -d '{"name":"Prometheus","type":"prometheus","url":"http://prometheus:9090","access":"proxy"}'
