@@ -158,13 +158,26 @@ jobs:
           
           # Appliquer le provisioner de stockage local
           kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/master/deploy/local-path-storage.yaml
-          
-          # Créer un PersistentVolume manuel
+
+      - name: "🧹 Nettoyer avant déploiement"
+        run: |
+          kubectl delete -f k8s/app/ --ignore-not-found=true -n ${{ env.NAMESPACE }} || true
+          kubectl delete pvc postgres-pvc -n ${{ env.NAMESPACE }} --ignore-not-found=true || true
+          kubectl delete pv postgres-pv -n ${{ env.NAMESPACE }} --ignore-not-found=true || true
+
+      - name: "🚀 Initialiser le namespace"
+        run: |
+          kubectl create ns ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: "🗄️ Déployer PostgreSQL"
+        run: |
+          # Créer le PV manuel
           cat <<EOF | kubectl apply -f -
           apiVersion: v1
           kind: PersistentVolume
           metadata:
-            name: postgres-manual-pv
+            name: postgres-pv
+            namespace: ${{ env.NAMESPACE }}
           spec:
             storageClassName: local-path
             capacity:
@@ -173,45 +186,25 @@ jobs:
               - ReadWriteOnce
             hostPath:
               path: /mnt/data/postgres
+              type: DirectoryOrCreate
+            persistentVolumeReclaimPolicy: Retain
           EOF
-
-      - name: "🧹 Nettoyer avant déploiement"
-        run: |
-          kubectl delete -f k8s/app/ --ignore-not-found=true -n ${{ env.NAMESPACE }} || true
-          kubectl delete pvc postgres-pvc -n ${{ env.NAMESPACE }} --ignore-not-found=true || true
-
-      - name: "🚀 Initialiser le namespace"
-        run: |
-          kubectl create ns ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
-
-      - name: "🗄️ Déployer PostgreSQL"
-        run: |
-          echo "=== Déploiement du PVC ==="
+          
+          # Créer le PVC
           kubectl apply -f k8s/app/db/postgres-pvc.yaml -n ${{ env.NAMESPACE }}
           
+          # Attendre que le PVC soit bound
           echo "=== Attente du binding du PVC ==="
-          for i in {1..30}; do
-            PVC_STATUS=$(kubectl get pvc postgres-pvc -n ${{ env.NAMESPACE }} -o jsonpath='{.status.phase}')
-            [ "$PVC_STATUS" = "Bound" ] && break
-            sleep 5
-            echo "Attente du binding (tentative $i/30)... Statut: $PVC_STATUS"
-            kubectl describe pvc postgres-pvc -n ${{ env.NAMESPACE }} || true
-          done
+          timeout 60s bash -c 'while [[ $(kubectl get pvc postgres-pvc -n ${{ env.NAMESPACE }} -o jsonpath="{.status.phase}") != "Bound" ]]; do
+            sleep 3
+            echo "Statut PVC: $(kubectl get pvc postgres-pvc -n ${{ env.NAMESPACE }} -o jsonpath="{.status.phase}")"
+          done'
           
-          if [ "$PVC_STATUS" != "Bound" ]; then
-            echo "❌ Échec du binding du PVC"
-            echo "=== Détails du PVC ==="
-            kubectl describe pvc postgres-pvc -n ${{ env.NAMESPACE }}
-            echo "=== Volumes persistants disponibles ==="
-            kubectl get pv
-            exit 1
-          fi
-          
-          echo "=== Déploiement de PostgreSQL ==="
+          # Déployer PostgreSQL
           kubectl apply -f k8s/app/db/postgres-deployment.yaml -n ${{ env.NAMESPACE }}
           kubectl apply -f k8s/app/db/postgres-service.yaml -n ${{ env.NAMESPACE }}
           
-          echo "=== Attente du démarrage ==="
+          # Attendre que PostgreSQL soit prêt
           kubectl rollout status deployment/postgres -n ${{ env.NAMESPACE }} --timeout=300s
 
       - name: "🔍 Valider la connexion PostgreSQL"
@@ -219,7 +212,8 @@ jobs:
           echo "=== Test de connexion ==="
           POD_NAME=$(kubectl get pods -n ${{ env.NAMESPACE }} -l app=postgres -o jsonpath='{.items[0].metadata.name}')
           kubectl exec -n ${{ env.NAMESPACE }} $POD_NAME -- \
-            pg_isready -U tunisbus -h localhost -d gestion_trajet --timeout=60 || {
+            pg_isready -U $(kubectl get secret gestion-trajet-secret -n ${{ env.NAMESPACE }} -o jsonpath='{.data.DB_USER}' | base64 --decode) \
+            -h localhost -d $(kubectl get configmap gestion-trajet-config -n ${{ env.NAMESPACE }} -o jsonpath='{.data.DB_NAME}') --timeout=60 || {
               echo "❌ Échec de connexion à PostgreSQL"
               kubectl logs -n ${{ env.NAMESPACE }} $POD_NAME
               exit 1
@@ -255,6 +249,8 @@ jobs:
           kubectl get events -n ${{ env.NAMESPACE }} --sort-by='.lastTimestamp' || true
           echo "=== Description des Pods ==="
           kubectl describe pods -n ${{ env.NAMESPACE }} || true
+          echo "=== État des Volumes ==="
+          kubectl get pv,pvc -n ${{ env.NAMESPACE }} || true
 
       - name: "📧 Notification d'échec"
         if: failure()

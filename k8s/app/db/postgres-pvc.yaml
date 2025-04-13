@@ -3,10 +3,12 @@ kind: PersistentVolumeClaim
 metadata:
   name: postgres-pvc
   namespace: microservice-1
+  annotations:
+    volume.beta.kubernetes.io/storage-class: local-path
 spec:
-  storageClassName: local-path  # Ajout crucial pour K3s
   accessModes:
-    - ReadWriteOnce
+  - ReadWriteOnce
   resources:
     requests:
       storage: 5Gi
+  volumeMode: Filesystem

@@ -44,6 +44,7 @@ spec:
         volumeMounts:
         - name: postgres-data
           mountPath: /var/lib/postgresql/data
+          subPath: postgres  # ⚠️ Ajout crucial pour K3s
         livenessProbe:
           exec:
             command:
