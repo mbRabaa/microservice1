@@ -19,7 +19,11 @@ app.use(express.json());
 
 // Database connection
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  host: process.env.DB_HOST || 'db-host',
+  port: process.env.DB_PORT || 5432,
+  user: process.env.DB_USER || 'tunisbus',
+  password: process.env.DB_PASSWORD || '0000',
+  database: process.env.DB_NAME || 'gestion_trajet_db'
 });
 
 // Test database connection

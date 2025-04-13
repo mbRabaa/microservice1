@@ -4,10 +4,9 @@ metadata:
   name: gestion-trajet-service
   namespace: microservice-1
 spec:
-  type: LoadBalancer
+  type: ClusterIP  # Changez en LoadBalancer si besoin d'accès externe
   ports:
-    - port: 8080
-      targetPort: 8080
-      nodePort: 31000 # Optionnel
+  - port: 8080
+    targetPort: 8080
   selector:
     app: gestion-trajet

@@ -4,7 +4,9 @@ metadata:
   name: gestion-trajet-config
   namespace: microservice-1
 data:
-  NODE_ENV: "development"
-  PORT: "5000"
-  DATABASE_URL: postgres://tunisbus:tunisbus@postgres:5432/tunisbusdb
-  VITE_API_URL: "http://localhost:5000/api"
+  NODE_ENV: "production"
+  PORT: "8080"
+  DB_HOST: "db-host" # Doit matcher le nom du service
+  DB_PORT: "5432"
+  DB_NAME: "gestion_trajet_db"
+  VITE_API_URL: "http://gestion-trajet-service:8080/api"
