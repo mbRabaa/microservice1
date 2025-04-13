@@ -147,27 +147,33 @@ jobs:
           # Installer K3s
           curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=${{ env.K3S_VERSION }} sh -
           
-          # Attendre que K3s soit prêt
-          echo "=== Attente du démarrage de K3s ==="
-          for i in {1..30}; do
-            if sudo k3s kubectl get nodes; then
-              break
-            fi
-            sleep 5
-            echo "Attente du démarrage de K3s (tentative $i/30)..."
-          done
-          
           # Configurer le stockage local
-          sudo k3s kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/master/deploy/local-path-storage.yaml --validate=false
-          sudo chmod 644 /etc/rancher/k3s/k3s.yaml
-
-      - name: "⚙️ Configurer kubectl"
-        run: |
+          sudo mkdir -p /mnt/data/postgres
+          sudo chmod 777 /mnt/data/postgres
+          
+          # Configurer l'accès kubectl
           mkdir -p $HOME/.kube
           sudo cp /etc/rancher/k3s/k3s.yaml $HOME/.kube/config
           sudo chown $(id -u):$(id -g) $HOME/.kube/config
-          export KUBECONFIG=$HOME/.kube/config
-          kubectl cluster-info
+          
+          # Appliquer le provisioner de stockage local
+          kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/master/deploy/local-path-storage.yaml
+          
+          # Créer un PersistentVolume manuel
+          cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: PersistentVolume
+          metadata:
+            name: postgres-manual-pv
+          spec:
+            storageClassName: local-path
+            capacity:
+              storage: 5Gi
+            accessModes:
+              - ReadWriteOnce
+            hostPath:
+              path: /mnt/data/postgres
+          EOF
 
       - name: "🧹 Nettoyer avant déploiement"
         run: |
@@ -180,23 +186,37 @@ jobs:
 
       - name: "🗄️ Déployer PostgreSQL"
         run: |
-          # Appliquer les ressources PostgreSQL
+          echo "=== Déploiement du PVC ==="
           kubectl apply -f k8s/app/db/postgres-pvc.yaml -n ${{ env.NAMESPACE }}
           
-          # Attendre que le PVC soit lié
           echo "=== Attente du binding du PVC ==="
-          kubectl wait --for=jsonpath='{.status.phase}'=Bound pvc/postgres-pvc -n ${{ env.NAMESPACE }} --timeout=120s
+          for i in {1..30}; do
+            PVC_STATUS=$(kubectl get pvc postgres-pvc -n ${{ env.NAMESPACE }} -o jsonpath='{.status.phase}')
+            [ "$PVC_STATUS" = "Bound" ] && break
+            sleep 5
+            echo "Attente du binding (tentative $i/30)... Statut: $PVC_STATUS"
+            kubectl describe pvc postgres-pvc -n ${{ env.NAMESPACE }} || true
+          done
           
-          # Déployer PostgreSQL
+          if [ "$PVC_STATUS" != "Bound" ]; then
+            echo "❌ Échec du binding du PVC"
+            echo "=== Détails du PVC ==="
+            kubectl describe pvc postgres-pvc -n ${{ env.NAMESPACE }}
+            echo "=== Volumes persistants disponibles ==="
+            kubectl get pv
+            exit 1
+          fi
+          
+          echo "=== Déploiement de PostgreSQL ==="
           kubectl apply -f k8s/app/db/postgres-deployment.yaml -n ${{ env.NAMESPACE }}
           kubectl apply -f k8s/app/db/postgres-service.yaml -n ${{ env.NAMESPACE }}
           
-          # Attendre que PostgreSQL soit prêt
+          echo "=== Attente du démarrage ==="
           kubectl rollout status deployment/postgres -n ${{ env.NAMESPACE }} --timeout=300s
 
       - name: "🔍 Valider la connexion PostgreSQL"
         run: |
-          echo "=== Test de connexion PostgreSQL ==="
+          echo "=== Test de connexion ==="
           POD_NAME=$(kubectl get pods -n ${{ env.NAMESPACE }} -l app=postgres -o jsonpath='{.items[0].metadata.name}')
           kubectl exec -n ${{ env.NAMESPACE }} $POD_NAME -- \
             pg_isready -U tunisbus -h localhost -d gestion_trajet --timeout=60 || {
@@ -233,6 +253,8 @@ jobs:
           kubectl logs -n ${{ env.NAMESPACE }} -l app=${{ env.APP_NAME }} --tail=100 || true
           echo "=== Événements ==="
           kubectl get events -n ${{ env.NAMESPACE }} --sort-by='.lastTimestamp' || true
+          echo "=== Description des Pods ==="
+          kubectl describe pods -n ${{ env.NAMESPACE }} || true
 
       - name: "📧 Notification d'échec"
         if: failure()

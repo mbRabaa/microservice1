@@ -4,6 +4,7 @@ metadata:
   name: postgres-pvc
   namespace: microservice-1
 spec:
+  storageClassName: local-path  # Ajout crucial pour K3s
   accessModes:
     - ReadWriteOnce
   resources:
