@@ -16,6 +16,7 @@ env:
   SERVICE_NAME: gestion-trajet-service
   CONTAINER_PORT: 8080
   SERVICE_PORT: 80
+  DB_SERVICE_NAME: db-host
   
   # Configuration Monitoring
   PROMETHEUS_PORT: 9090
@@ -145,33 +146,43 @@ jobs:
         run: |
           curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=${{ env.K3S_VERSION }} sh -
           sudo chmod 644 /etc/rancher/k3s/k3s.yaml
+          sudo k3s kubectl get nodes
 
       - name: "⚙️ Configurer kubectl"
         run: |
           mkdir -p $HOME/.kube
           sudo cp /etc/rancher/k3s/k3s.yaml $HOME/.kube/config
           sudo chown $(id -u):$(id -g) $HOME/.kube/config
+          kubectl cluster-info
 
       - name: "🧹 Nettoyer avant déploiement"
         run: |
-          kubectl delete deployment ${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }} --ignore-not-found=true || true
-          kubectl delete service ${{ env.SERVICE_NAME }} -n ${{ env.NAMESPACE }} --ignore-not-found=true || true
-          kubectl delete configmap app-config -n ${{ env.NAMESPACE }} --ignore-not-found=true || true
-          kubectl delete secret database-credentials -n ${{ env.NAMESPACE }} --ignore-not-found=true || true
+          kubectl delete -f k8s/app/ --ignore-not-found=true -n ${{ env.NAMESPACE }} || true
+          kubectl delete pvc postgres-pvc -n ${{ env.NAMESPACE }} --ignore-not-found=true || true
 
-      - name: "🚀 Déployer l'infrastructure"
+      - name: "🚀 Créer le namespace"
         run: |
           kubectl create ns ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
-          kubectl apply -f k8s/infra/coredns -n kube-system || true
-          kubectl apply -f k8s/app/db -n ${{ env.NAMESPACE }} || true
 
-      - name: "⏳ Attendre que PostgreSQL soit prêt"
-        timeout-minutes: 5
+      - name: "🗄️ Déployer PostgreSQL"
         run: |
-          echo "=== Attente du démarrage de PostgreSQL ==="
-          kubectl wait --for=condition=Ready pod -n ${{ env.NAMESPACE }} -l app=postgres --timeout=300s
+          # Appliquer les ressources PostgreSQL
+          kubectl apply -f k8s/app/db/postgres-pvc.yaml -n ${{ env.NAMESPACE }}
+          kubectl apply -f k8s/app/db/postgres-deployment.yaml -n ${{ env.NAMESPACE }}
+          kubectl apply -f k8s/app/db/postgres-service.yaml -n ${{ env.NAMESPACE }}
           
-          echo "=== Vérification de la connexion PostgreSQL ==="
+          # Attendre que le PVC soit lié
+          kubectl wait --for=status=Bound pvc/postgres-pvc -n ${{ env.NAMESPACE }} --timeout=120s
+          
+          # Attendre que PostgreSQL soit prêt
+          kubectl rollout status deployment/postgres -n ${{ env.NAMESPACE }} --timeout=300s
+
+      - name: "🔍 Vérifier PostgreSQL"
+        run: |
+          echo "=== État de PostgreSQL ==="
+          kubectl get pods,svc,pvc -n ${{ env.NAMESPACE }} -o wide
+          
+          echo "=== Vérification de la connexion ==="
           kubectl exec -n ${{ env.NAMESPACE }} $(kubectl get pods -n ${{ env.NAMESPACE }} -l app=postgres -o jsonpath='{.items[0].metadata.name}') -- \
             pg_isready -U ${{ secrets.DB_USER }} -h localhost -d ${{ secrets.DB_NAME }} --timeout=60 || {
               echo "❌ Échec de connexion à PostgreSQL"
@@ -181,13 +192,14 @@ jobs:
 
       - name: "🚀 Déployer l'application"
         run: |
-          kubectl apply -f k8s/app -n ${{ env.NAMESPACE }} || true
-          kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }} --timeout=300s || true
+          kubectl apply -f k8s/app/deployment.yaml -n ${{ env.NAMESPACE }}
+          kubectl apply -f k8s/app/service.yaml -n ${{ env.NAMESPACE }}
+          kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }} --timeout=300s
 
       - name: "🔍 Vérifier le déploiement"
         run: |
-          echo "=== État final des Pods ==="
-          kubectl get pods -n ${{ env.NAMESPACE }} -o wide
+          echo "=== État final des ressources ==="
+          kubectl get all -n ${{ env.NAMESPACE }} -o wide
           
           echo "=== Vérification de l'application ==="
           kubectl port-forward svc/${{ env.SERVICE_NAME }} 8080:${{ env.CONTAINER_PORT }} -n ${{ env.NAMESPACE }} >/dev/null 2>&1 &
@@ -200,16 +212,17 @@ jobs:
             exit 1
           fi
 
-      - name: "📜 Afficher les logs PostgreSQL en cas d'échec"
+      - name: "📜 Afficher les logs en cas d'échec"
         if: failure()
         run: |
-          kubectl logs -n ${{ env.NAMESPACE }} $(kubectl get pods -n ${{ env.NAMESPACE }} -l app=postgres -o jsonpath='{.items[0].metadata.name}') --tail=100
-
-      - name: "🔄 Rollback en cas d'échec"
-        if: failure()
-        run: |
-          kubectl rollout undo deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }} || true
-          exit 1
+          echo "=== Logs PostgreSQL ==="
+          kubectl logs -n ${{ env.NAMESPACE }} -l app=postgres --tail=100 || true
+          
+          echo "=== Logs Application ==="
+          kubectl logs -n ${{ env.NAMESPACE }} -l app=${{ env.APP_NAME }} --tail=100 || true
+          
+          echo "=== Événements du namespace ==="
+          kubectl get events -n ${{ env.NAMESPACE }} --sort-by='.lastTimestamp' || true
 
       - name: "📧 Notification d'échec"
         if: failure()
