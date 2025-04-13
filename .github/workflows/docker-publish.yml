@@ -13,7 +13,7 @@ env:
   
   # Configuration Application
   APP_NAME: gestion-trajet
-  DEPLOYMENT_NAME: gestion-trajet  # Modifié pour correspondre au deployment.yaml
+  DEPLOYMENT_NAME: gestion-trajet-app # Modifié pour correspondre au deployment.yaml
   SERVICE_NAME: gestion-trajet-service
   CONTAINER_PORT: 8080  # Modifié pour correspondre au port de votre application
   SERVICE_PORT: 80
