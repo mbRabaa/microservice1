@@ -1,18 +1,10 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: gestion-trajet  # Nom aligné avec le workflow
-  namespace: microservice
-  labels:
-    app: gestion-trajet
-    tier: backend
+  name: gestion-trajet-app
+  namespace: microservice-1
 spec:
   replicas: 3
-  strategy:
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
-    type: RollingUpdate
   selector:
     matchLabels:
       app: gestion-trajet
@@ -20,44 +12,70 @@ spec:
     metadata:
       labels:
         app: gestion-trajet
-        version: v1.0.0
     spec:
-      imagePullSecrets:
-      - name: regcred  # Secret pour l'authentification Docker
       containers:
-      - name: app
-        image: mbrabaa2023/gestion_trajet:latest
-        imagePullPolicy: IfNotPresent
-        ports:
-        - containerPort: 8080
-          name: http
-          protocol: TCP
-        envFrom:
-        - secretRef:
-            name: gestion-trajet-secrets
-        - configMapRef:
-            name: gestion-trajet-config
-        readinessProbe:
-          httpGet:
-            path: /healthz
-            port: 8080
-          initialDelaySeconds: 10
-          periodSeconds: 5
-          failureThreshold: 3
-        livenessProbe:
-          httpGet:
-            path: /healthz
-            port: 8080
-          initialDelaySeconds: 30
-          periodSeconds: 10
-        resources:
-          requests:
-            cpu: 100m
-            memory: 128Mi
-          limits:
-            cpu: 500m
-            memory: 512Mi
-        securityContext:
-          runAsNonRoot: true
-          readOnlyRootFilesystem: true
-          allowPrivilegeEscalation: false
+        - name: gestion-trajet
+          image: mbrabaa2023/microservice-1:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: gestion-trajet-secrets
+                  key: DATABASE_URL
+            - name: NODE_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: gestion-trajet-config
+                  key: NODE_ENV
+            - name: PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: gestion-trajet-config
+                  key: PORT
+            - name: VITE_API_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: gestion-trajet-config
+                  key: VITE_API_URL
+          resources:
+            limits:
+              memory: "512Mi"  # Limite de mémoire
+              cpu: "500m"      # Limite de CPU
+            requests:
+              memory: "256Mi"  # Requête de mémoire (minimale requise)
+              cpu: "250m"      # Requête de CPU (minimale requise)
+          volumeMounts:
+            - name: app-storage
+              mountPath: /app/data  # Le répertoire pour les données
+      volumes:
+        - name: app-storage
+          persistentVolumeClaim:
+            claimName: gestion-trajet-pvc  # Référence le PVC
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: gestion-trajet-pv
+  namespace: microservice-1
+spec:
+  capacity:
+    storage: 1Gi  # Taille du PV
+  accessModes:
+    - ReadWriteOnce  # Mode d'accès
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /mnt/data/gestion-trajet  # Répertoire sur le nœud hôte
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gestion-trajet-pvc
+  namespace: microservice-1
+spec:
+  accessModes:
+    - ReadWriteOnce  # Mode d'accès
+  resources:
+    requests:
+      storage: 1Gi  # Taille demandée pour le PVC

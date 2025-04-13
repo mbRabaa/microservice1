@@ -8,7 +8,7 @@ on:
 env:
   # Configuration Kubernetes
   K3S_VERSION: v1.26.5+k3s1
-  NAMESPACE: microservice
+  NAMESPACE: microservice-1
   DOCKER_REGISTRY: docker.io
   
   # Configuration Application
@@ -175,7 +175,7 @@ jobs:
           kubectl apply -f ./k8s -n ${{ env.NAMESPACE }}
           
           # Vérifier le déploiement
-          kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }} --timeout=300s
+          kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }} --timeout=600s
 
       - name: "🐞 Debug des Pods"
         if: always()
@@ -208,7 +208,17 @@ jobs:
             kubectl logs -l app=${{ env.APP_NAME }} -n ${{ env.NAMESPACE }} --tail=50
             exit 1
           fi
-
+          - name: "🐞 Debug approfondi"
+          if: failure()
+          run: |
+            echo "=== Détails des pods ==="
+            kubectl describe pods -n ${{ env.NAMESPACE }} -l app=${{ env.APP_NAME }}
+            
+            echo "=== Logs des containers ==="
+            kubectl logs -n ${{ env.NAMESPACE }} -l app=${{ env.APP_NAME }} --all-containers=true --tail=200
+            
+            echo "=== Événements Kubernetes ==="
+            kubectl get events -n ${{ env.NAMESPACE }} --sort-by='.metadata.creationTimestamp' --field-selector type!=Normal
       - name: "🔄 Rollback en cas d'échec"
         if: failure()
         run: |
