@@ -1,4 +1,4 @@
-name: CI/CD - Pipeline DevOps complet avec monitoring + notification
+name: CI/CD - Pipeline DevOps complet build + test +deployment k8savec monitoring + notification
 
 on:
   push:
