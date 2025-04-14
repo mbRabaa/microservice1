@@ -278,6 +278,52 @@ jobs:
               app: ${{ env.APP_NAME }}
           EOF
 
+      - name: "✅ Vérifier le déploiement de l'application"
+        run: |
+          echo "=== Vérification des déploiements ==="
+          kubectl get deployments -n ${{ env.NAMESPACE }}
+          
+          echo "=== Vérification du déploiement spécifique ==="
+          kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }} --timeout=180s
+          
+          echo "=== Vérification des pods ==="
+          kubectl get pods -n ${{ env.NAMESPACE }} -l app=${{ env.APP_NAME }}
+          
+          echo "=== Vérification des logs des pods ==="
+          for pod in $(kubectl get pods -n ${{ env.NAMESPACE }} -l app=${{ env.APP_NAME }} -o jsonpath='{.items[*].metadata.name}'); do
+            echo "Logs pour le pod $pod:"
+            kubectl logs $pod -n ${{ env.NAMESPACE }} --tail=50
+          done
+
+      - name: "🌐 Vérifier les services"
+        run: |
+          echo "=== Vérification des services ==="
+          kubectl get svc -n ${{ env.NAMESPACE }}
+          
+          echo "=== Vérification de l'accessibilité du service ==="
+          SERVICE_IP=$(kubectl get svc ${{ env.SERVICE_NAME }} -n ${{ env.NAMESPACE }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          SERVICE_PORT=${{ env.SERVICE_PORT }}
+          
+          if [ -z "$SERVICE_IP" ]; then
+            echo "Le service n'a pas d'adresse IP attribuée"
+            exit 1
+          fi
+          
+          echo "Tentative de connexion au service sur $SERVICE_IP:$SERVICE_PORT"
+          timeout 60 bash -c 'until nc -zv $0 $1; do sleep 5; echo "Nouvelle tentative..."; done' $SERVICE_IP $SERVICE_PORT
+          
+          echo "=== Test de requête HTTP ==="
+          curl -sSf http://$SERVICE_IP:$SERVICE_PORT/api/health || (echo "La requête HTTP a échoué"; exit 1)
+
+      - name: "📊 Vérifier la base de données"
+        run: |
+          echo "=== Vérification du service PostgreSQL ==="
+          kubectl get svc ${{ env.DB_SERVICE_NAME }} -n ${{ env.NAMESPACE }}
+          
+          echo "=== Vérification de la connexion à la base de données ==="
+          DB_POD=$(kubectl get pods -n ${{ env.NAMESPACE }} -l app=postgres -o jsonpath='{.items[0].metadata.name}')
+          kubectl exec -n ${{ env.NAMESPACE }} $DB_POD -- pg_isready -U postgres -d gestion_trajet
+
       - name: "🔄 Rollback en cas d'échec"
         if: failure()
         run: |
