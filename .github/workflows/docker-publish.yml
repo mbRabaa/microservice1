@@ -32,6 +32,7 @@ env:
 
 jobs:
   build-and-push:
+    needs: setup-and-test
     runs-on: ubuntu-latest
     steps:
       - name: 🛎️ Checkout du code
