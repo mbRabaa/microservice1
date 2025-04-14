@@ -232,7 +232,18 @@ jobs:
             kubectl get events -n ${{ env.NAMESPACE }} --sort-by='.lastTimestamp'
             exit 1
           fi
-
+      - name: "🔐 Créer les secrets et configmaps"
+        run: |
+            # Créer la ConfigMap
+            kubectl create configmap gestion-trajet-config \
+              --from-literal=DB_NAME=gestion_trajet \
+              -n ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+            
+            # Créer le Secret
+            kubectl create secret generic gestion-trajet-secret \
+              --from-literal=DB_USER=postgres \
+              --from-literal=DB_PASSWORD=securepassword \
+              -n ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -    
       - name: "🐘 Déployer PostgreSQL"
         run: |
           # Appliquer les configurations PostgreSQL
