@@ -1,0 +1,20 @@
+{
+  "dashboard": {
+    "title": "Node.js Metrics",
+    "panels": [
+      {
+        "title": "CPU Usage",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(process_cpu_seconds_total[1m])",
+            "legendFormat": "CPU Usage"
+          }
+        ]
+      }
+    ],
+    "uid": "nodejs-metrics"
+  },
+  "folderId": 0,
+  "overwrite": true
+}
