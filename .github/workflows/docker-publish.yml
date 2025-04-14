@@ -380,49 +380,59 @@ jobs:
             
             Un rollback a été effectué.
 
-  monitoring-deploy:
-    name: "4. Déploiement Monitoring"
-    needs: kubernetes-deploy
-    runs-on: ubuntu-latest
-    steps:
-      - name: "🛎️ Checkout du code"
-        uses: actions/checkout@v4
-
-      - name: "🐳 Installer Docker Compose"
-        run: |
-          sudo curl -L "https://github.com/docker/compose/releases/download/v2.23.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-          sudo chmod +x /usr/local/bin/docker-compose
-
-      - name: "🚀 Démarrer les services"
-        working-directory: ./monitoring
-        run: |
-          docker-compose up -d --build
-          sleep 30
-
-      - name: "📊 Configurer Grafana"
-        working-directory: ./monitoring
-        run: |
-          # Attendre que Grafana soit prêt
-          until curl -s http://localhost:3000/api/health; do
-            sleep 5
-          done
+            monitoring-deploy:
+              name: "4. Déploiement Monitoring"
+              needs: kubernetes-deploy
+              runs-on: ubuntu-latest
+              env:
+                GRAFANA_ADMIN_USER: admin
+                GRAFANA_ADMIN_PASSWORD: rabaa123
+              steps:
+                - name: "🛎️ Checkout du code"
+                  uses: actions/checkout@v4
           
-          # Configurer la source de données Prometheus
-          curl -X POST "http://localhost:3000/api/datasources" \
-            -H "Content-Type: application/json" \
-            -u "admin:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
-            -d '{
-              "name":"Prometheus",
-              "type":"prometheus",
-              "url":"http://prometheus:9090",
-              "access":"proxy",
-              "isDefault":true
-            }'
+                - name: "🐳 Installer Docker Compose"
+                  run: |
+                    sudo curl -L "https://github.com/docker/compose/releases/download/v2.23.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+                    sudo chmod +x /usr/local/bin/docker-compose
           
-          # Importer les dashboards
-          for file in grafana-dashboards/*.json; do
-            curl -X POST "http://localhost:3000/api/dashboards/db" \
-              -H "Content-Type: application/json" \
-              -u "admin:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
-              -d @"$file"
-          done
+                - name: "🚀 Démarrer les services"
+                  working-directory: ./monitoring
+                  run: |
+                    docker-compose up -d --build
+                    sleep 30
+          
+                - name: "📊 Configurer Grafana"
+                  working-directory: ./monitoring
+                  run: |
+                    # Attendre que Grafana soit prêt
+                    echo "Attente du démarrage de Grafana..."
+                    until curl -s http://localhost:3000/api/health | grep -q '"database":"ok"'; do
+                      sleep 5
+                    done
+          
+                    # Configurer la source de données Prometheus
+                    echo "Configuration de la source de données Prometheus..."
+                    curl -X POST \
+                      -H "Content-Type: application/json" \
+                      -u "${{ env.GRAFANA_ADMIN_USER }}:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
+                      -d '{
+                        "name":"Prometheus",
+                        "type":"prometheus",
+                        "url":"http://prometheus:9090",
+                        "access":"proxy",
+                        "isDefault":true
+                      }' \
+                      http://localhost:3000/api/datasources
+          
+                    # Importer les dashboards
+                    echo "Importation des dashboards..."
+                    for file in grafana-dashboards/*.json; do
+                      echo "Importation de $file"
+                      curl -X POST \
+                        -H "Content-Type: application/json" \
+                        -u "${{ env.GRAFANA_ADMIN_USER }}:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
+                        -d @"$file" \
+                        http://localhost:3000/api/dashboards/db
+                    done
+                    echo "Configuration Grafana terminée"
