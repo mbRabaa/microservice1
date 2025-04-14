@@ -187,7 +187,7 @@ jobs:
             POSTGRES_DB: $(echo -n "gestion_trajet" | base64 -w0)
           EOF
 
-      - name: "🐘 Déployer PostgreSQL"
+      - name: "🐘 Déployer PostgreSQL et attendre qu'il soit prêt"
         run: |
           cat <<EOF | kubectl apply -n ${{ env.NAMESPACE }} -f -
           apiVersion: apps/v1
@@ -234,6 +234,9 @@ jobs:
                 port: 5432
                 targetPort: 5432
           EOF
+          
+          # Attendre que PostgreSQL soit prêt
+          kubectl wait --for=condition=available --timeout=300s deployment/postgres -n ${{ env.NAMESPACE }}
 
       - name: "🚀 Déployer l'application"
         run: |
@@ -257,11 +260,26 @@ jobs:
                   image: ${{ secrets.DOCKER_USERNAME }}/gestion_trajet:latest
                   ports:
                   - containerPort: ${{ env.CONTAINER_PORT }}
-                  envFrom:
-                  - configMapRef:
-                      name: app-config
-                  - secretRef:
-                      name: app-secret
+                  env:
+                  - name: DB_HOST
+                    value: "${{ env.DB_SERVICE_NAME }}"
+                  - name: DB_PORT
+                    value: "5432"
+                  - name: DB_USER
+                    valueFrom:
+                      secretKeyRef:
+                        name: postgres-secret
+                        key: POSTGRES_USER
+                  - name: DB_PASSWORD
+                    valueFrom:
+                      secretKeyRef:
+                        name: postgres-secret
+                        key: POSTGRES_PASSWORD
+                  - name: DB_NAME
+                    valueFrom:
+                      secretKeyRef:
+                        name: postgres-secret
+                        key: POSTGRES_DB
           EOF
           
           cat <<EOF | kubectl apply -n ${{ env.NAMESPACE }} -f -
@@ -278,13 +296,14 @@ jobs:
               app: ${{ env.APP_NAME }}
           EOF
 
+      - name: "⏳ Attendre que l'application soit prête"
+        run: |
+          kubectl wait --for=condition=available --timeout=300s deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }}
+
       - name: "✅ Vérifier le déploiement de l'application"
         run: |
           echo "=== Vérification des déploiements ==="
           kubectl get deployments -n ${{ env.NAMESPACE }}
-          
-          echo "=== Vérification du déploiement spécifique ==="
-          kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }} --timeout=180s
           
           echo "=== Vérification des pods ==="
           kubectl get pods -n ${{ env.NAMESPACE }} -l app=${{ env.APP_NAME }}
