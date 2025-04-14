@@ -235,7 +235,6 @@ jobs:
                 targetPort: 5432
           EOF
           
-          # Attendre que PostgreSQL soit prêt
           kubectl wait --for=condition=available --timeout=300s deployment/postgres -n ${{ env.NAMESPACE }}
 
       - name: "🚀 Déployer l'application"
@@ -300,85 +299,11 @@ jobs:
         run: |
           kubectl wait --for=condition=available --timeout=300s deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }}
 
-      - name: "✅ Vérifier le déploiement de l'application"
+      - name: "✅ Vérifier le déploiement"
         run: |
-          echo "=== Vérification des déploiements ==="
-          kubectl get deployments -n ${{ env.NAMESPACE }}
-          
-          echo "=== Vérification des pods ==="
-          kubectl get pods -n ${{ env.NAMESPACE }} -l app=${{ env.APP_NAME }}
-          
-          echo "=== Vérification des logs des pods ==="
-          for pod in $(kubectl get pods -n ${{ env.NAMESPACE }} -l app=${{ env.APP_NAME }} -o jsonpath='{.items[*].metadata.name}'); do
-            echo "Logs pour le pod $pod:"
-            kubectl logs $pod -n ${{ env.NAMESPACE }} --tail=50
-          done
-
-      - name: "🌐 Vérifier les services"
-        run: |
-          echo "=== Vérification des services ==="
+          kubectl get all -n ${{ env.NAMESPACE }}
+          kubectl get pods -n ${{ env.NAMESPACE }} -o wide
           kubectl get svc -n ${{ env.NAMESPACE }}
-          
-          echo "=== Vérification de l'accessibilité du service ==="
-          SERVICE_IP=$(kubectl get svc ${{ env.SERVICE_NAME }} -n ${{ env.NAMESPACE }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-          SERVICE_PORT=${{ env.SERVICE_PORT }}
-          
-          if [ -z "$SERVICE_IP" ]; then
-            echo "Le service n'a pas d'adresse IP attribuée"
-            exit 1
-          fi
-          
-          echo "Tentative de connexion au service sur $SERVICE_IP:$SERVICE_PORT"
-          timeout 60 bash -c 'until nc -zv $0 $1; do sleep 5; echo "Nouvelle tentative..."; done' $SERVICE_IP $SERVICE_PORT
-          
-          echo "=== Test simplifié de réponse du serveur ==="
-          if curl -s -I http://$SERVICE_IP:$SERVICE_PORT | grep -q "HTTP/"; then
-            echo "Le serveur répond correctement"
-            exit 0
-          else
-            echo "Le serveur ne répond pas"
-            exit 1
-          fi
-
-      - name: "📊 Vérifier la base de données"
-        run: |
-          echo "=== Vérification du service PostgreSQL ==="
-          kubectl get svc ${{ env.DB_SERVICE_NAME }} -n ${{ env.NAMESPACE }}
-          
-          echo "=== Vérification de la connexion à la base de données ==="
-          DB_POD=$(kubectl get pods -n ${{ env.NAMESPACE }} -l app=postgres -o jsonpath='{.items[0].metadata.name}')
-          kubectl exec -n ${{ env.NAMESPACE }} $DB_POD -- pg_isready -U postgres -d gestion_trajet
-
-      - name: "🔄 Rollback en cas d'échec"
-        if: failure()
-        run: |
-          echo "=== Lancement du rollback ==="
-          kubectl rollout undo deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }}
-          echo "=== État après rollback ==="
-          kubectl get pods -n ${{ env.NAMESPACE }}
-          exit 1
-
-      - name: "📧 Notification d'échec"
-        if: failure()
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          username: ${{ secrets.EMAIL_USERNAME }}
-          password: ${{ secrets.EMAIL_PASSWORD }}
-          from: ${{ env.EMAIL_FROM }}
-          to: ${{ env.YOUR_EMAIL }}
-          subject: "Échec de déploiement - ${{ env.APP_NAME }}"
-          body: |
-            Le déploiement a échoué.
-            
-            Détails:
-            - Commit: ${{ github.sha }}
-            - Application: ${{ env.APP_NAME }}
-            - Namespace: ${{ env.NAMESPACE }}
-            - Heure: $(date)
-            
-            Un rollback a été effectué.
 
   monitoring-deploy:
     name: "4. Déploiement Monitoring"
@@ -391,62 +316,74 @@ jobs:
       - name: "🛎️ Checkout du code"
         uses: actions/checkout@v4
   
-      - name: "🐳 Pré-télécharger les images Docker"
+      - name: "🐳 Pré-télécharger les images"
         run: |
-          docker pull grafana/grafana
-          docker pull prom/prometheus
-          docker images
+          docker pull grafana/grafana:latest
+          docker pull prom/prometheus:latest
+          docker pull prom/node-exporter:latest
   
       - name: "🐳 Installer Docker Compose"
         run: |
           sudo curl -L "https://github.com/docker/compose/releases/download/v2.23.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
           sudo chmod +x /usr/local/bin/docker-compose
   
-      - name: "🚀 Démarrer les services avec timeout"
+      - name: "🚀 Démarrer la stack de monitoring"
         working-directory: ./monitoring
         run: |
-          # Démarrer les services en arrière-plan
-          docker-compose up -d --build
+          docker-compose up -d
           
-          # Timeout après 5 minutes maximum
-          timeout 300 bash -c '
-            while ! curl -s http://localhost:3000/api/health; do
-              sleep 5
-              echo "En attente du démarrage de Grafana..."
-            done
-          ' || echo "Dépassement du timeout - continuation du workflow"
+          # Attendre que Grafana soit prêt
+          echo "En attente du démarrage de Grafana..."
+          for i in {1..30}; do
+            if curl -s http://localhost:3000/api/health | grep -q '"database":"ok"'; then
+              echo "Grafana est prêt après $i essais"
+              break
+            fi
+            sleep 10
+            echo "Essai $i/30 - En attente..."
+            if [ $i -eq 30 ]; then
+              echo "Timeout: Grafana n'a pas démarré correctement"
+              docker-compose logs grafana
+              exit 1
+            fi
+          done
   
       - name: "📊 Configurer Grafana"
         working-directory: ./monitoring
         run: |
-          # Vérification rapide de la santé de Grafana
-          if curl -s http://localhost:3000/api/health | grep -q '"database":"ok"'; then
-            echo "Grafana est prêt - configuration en cours..."
-            
-            # Configurer la source de données Prometheus
-            echo "Configuration de la source de données Prometheus..."
+          # Configurer la source de données Prometheus
+          echo "Configuration de la source Prometheus..."
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -u "${{ env.GRAFANA_ADMIN_USER }}:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
+            -d '{
+              "name":"Prometheus",
+              "type":"prometheus",
+              "url":"http://prometheus:9090",
+              "access":"proxy",
+              "isDefault":true
+            }' \
+            http://localhost:3000/api/datasources
+          
+          # Importer les dashboards
+          echo "Importation des dashboards..."
+          for file in grafana-dashboards/*.json; do
+            echo "Importation de $file"
+            DASHBOARD=$(cat "$file" | jq 'del(.id)')
             curl -X POST \
               -H "Content-Type: application/json" \
               -u "${{ env.GRAFANA_ADMIN_USER }}:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
-              -d '{
-                "name":"Prometheus",
-                "type":"prometheus",
-                "url":"http://prometheus:9090",
-                "access":"proxy",
-                "isDefault":true
-              }' \
-              http://localhost:3000/api/datasources || echo "La source existe peut-être déjà"
-  
-            # Importer les dashboards
-            echo "Importation des dashboards..."
-            for file in grafana-dashboards/*.json; do
-              echo "Importation de $file"
-              curl -X POST \
-                -H "Content-Type: application/json" \
-                -u "${{ env.GRAFANA_ADMIN_USER }}:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
-                -d @"$file" \
-                http://localhost:3000/api/dashboards/db || echo "Échec de l'importation du dashboard $file"
-            done
-          else
-            echo "Grafana n'est pas prêt - passage à l'étape suivante"
-          fi
+              -d "$DASHBOARD" \
+              http://localhost:3000/api/dashboards/db
+          done
+          
+          echo "Configuration terminée"
+
+      - name: "🔄 Vérification finale"
+        run: |
+          echo "=== Services Docker ==="
+          docker ps
+          echo "=== Accès Grafana ==="
+          echo "http://localhost:3000 - admin:${{ env.GRAFANA_ADMIN_PASSWORD }}"
+          echo "=== Accès Prometheus ==="
+          echo "http://localhost:9090"
