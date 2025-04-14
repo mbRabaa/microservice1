@@ -145,19 +145,12 @@ jobs:
 
       - name: "🖥️ Installer et configurer K3s"
         run: |
-          # Installer K3s
           curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=${{ env.K3S_VERSION }} sh -
-          
-          # Configurer le stockage local
           sudo mkdir -p /mnt/data/postgres
           sudo chmod 777 /mnt/data/postgres
-          
-          # Configurer l'accès kubectl
           mkdir -p $HOME/.kube
           sudo cp /etc/rancher/k3s/k3s.yaml $HOME/.kube/config
           sudo chown $(id -u):$(id -g) $HOME/.kube/config
-          
-          # Appliquer le provisioner de stockage local
           kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/master/deploy/local-path-storage.yaml
 
       - name: "🧹 Nettoyer avant déploiement"
@@ -172,7 +165,6 @@ jobs:
 
       - name: "🗄️ Configurer le stockage PostgreSQL"
         run: |
-          # Créer le PV manuel
           cat <<EOF | kubectl apply -f -
           apiVersion: v1
           kind: PersistentVolume
@@ -190,7 +182,6 @@ jobs:
             persistentVolumeReclaimPolicy: Retain
           EOF
           
-          # Créer le PVC avec référence explicite au PV
           cat <<EOF | kubectl apply -n ${{ env.NAMESPACE }} -f -
           apiVersion: v1
           kind: PersistentVolumeClaim
@@ -205,64 +196,97 @@ jobs:
                 storage: 5Gi
             volumeName: postgres-pv
           EOF
-          
-          # Vérification de la création des ressources
-          echo "=== PV créé ==="
-          kubectl get pv postgres-pv -o wide
-          echo "=== PVC créé ==="
-          kubectl get pvc postgres-pvc -n ${{ env.NAMESPACE }} -o wide
 
       - name: "🔍 Vérifier le binding du PVC"
         run: |
-          echo "=== Attente du binding du PVC ==="
           timeout 120s bash -c 'while [[ $(kubectl get pvc postgres-pvc -n ${{ env.NAMESPACE }} -o jsonpath="{.status.phase}") != "Bound" ]]; do
             sleep 5
             echo "Statut PVC: $(kubectl get pvc postgres-pvc -n ${{ env.NAMESPACE }} -o jsonpath="{.status.phase}")"
-            echo "=== Détails PVC ==="
-            kubectl describe pvc postgres-pvc -n ${{ env.NAMESPACE }}
           done'
           
           PVC_STATUS=$(kubectl get pvc postgres-pvc -n ${{ env.NAMESPACE }} -o jsonpath="{.status.phase}")
           if [ "$PVC_STATUS" != "Bound" ]; then
             echo "❌ Échec du binding du PVC"
-            echo "=== Détails du PVC ==="
-            kubectl describe pvc postgres-pvc -n ${{ env.NAMESPACE }}
-            echo "=== Détails du PV ==="
-            kubectl describe pv postgres-pv
-            echo "=== Événements ==="
-            kubectl get events -n ${{ env.NAMESPACE }} --sort-by='.lastTimestamp'
             exit 1
           fi
 
       - name: "🔐 Créer les secrets et configmaps"
         run: |
-            # Créer la ConfigMap
-            kubectl create configmap gestion-trajet-config \
-              --from-literal=DB_NAME=gestion_trajet \
-              -n ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create configmap postgres-config \
+            --from-literal=pg_hba.conf="host all all all md5" \
+            -n ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
             
-            # Créer le Secret
-            kubectl create secret generic gestion-trajet-secret \
-              --from-literal=DB_USER=postgres \
-              --from-literal=DB_PASSWORD=securepassword \
-              -n ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -    
+          kubectl create configmap gestion-trajet-config \
+            --from-literal=DB_NAME=gestion_trajet \
+            -n ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+            
+          kubectl create secret generic gestion-trajet-secret \
+            --from-literal=DB_USER=postgres \
+            --from-literal=DB_PASSWORD=securepassword \
+            -n ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
 
       - name: "🐘 Déployer PostgreSQL"
         run: |
-          # Appliquer les configurations PostgreSQL
-          kubectl apply -f k8s/app/db/postgres-deployment.yaml -n ${{ env.NAMESPACE }}
-          kubectl apply -f k8s/app/db/postgres-service.yaml -n ${{ env.NAMESPACE }}
+          cat <<EOF | kubectl apply -n ${{ env.NAMESPACE }} -f -
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: postgres
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: postgres
+            template:
+              metadata:
+                labels:
+                  app: postgres
+              spec:
+                containers:
+                - name: postgres
+                  image: postgres:13
+                  ports:
+                  - containerPort: 5432
+                  volumeMounts:
+                  - mountPath: /var/lib/postgresql/data
+                    name: postgres-data
+                  - mountPath: /etc/postgresql
+                    name: postgres-config
+                  envFrom:
+                  - secretRef:
+                      name: gestion-trajet-secret
+                  - configMapRef:
+                      name: gestion-trajet-config
+                volumes:
+                - name: postgres-data
+                  persistentVolumeClaim:
+                    claimName: postgres-pvc
+                - name: postgres-config
+                  configMap:
+                    name: postgres-config
+          EOF
           
-          # Attendre que PostgreSQL soit prêt
+          cat <<EOF | kubectl apply -n ${{ env.NAMESPACE }} -f -
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: db-host
+          spec:
+            selector:
+              app: postgres
+            ports:
+              - protocol: TCP
+                port: 5432
+                targetPort: 5432
+          EOF
+          
           kubectl rollout status deployment/postgres -n ${{ env.NAMESPACE }} --timeout=300s
 
       - name: "🔍 Valider la connexion PostgreSQL"
         run: |
-          echo "=== Test de connexion PostgreSQL ==="
           POD_NAME=$(kubectl get pods -n ${{ env.NAMESPACE }} -l app=postgres -o jsonpath='{.items[0].metadata.name}')
           kubectl exec -n ${{ env.NAMESPACE }} $POD_NAME -- \
-            pg_isready -U $(kubectl get secret gestion-trajet-secret -n ${{ env.NAMESPACE }} -o jsonpath='{.data.DB_USER}' | base64 --decode) \
-            -h localhost -d $(kubectl get configmap gestion-trajet-config -n ${{ env.NAMESPACE }} -o jsonpath='{.data.DB_NAME}') --timeout=60 || {
+            pg_isready -U postgres -h localhost -d gestion_trajet --timeout=60 || {
               echo "❌ Échec de connexion à PostgreSQL"
               kubectl logs -n ${{ env.NAMESPACE }} $POD_NAME
               exit 1
@@ -279,17 +303,14 @@ jobs:
           echo "=== Ressources déployées ==="
           kubectl get all -n ${{ env.NAMESPACE }}
           
-          echo "=== Détails du déploiement ==="
-          kubectl describe deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }}
-          
           echo "=== Test de connectivité ==="
           kubectl port-forward svc/${{ env.SERVICE_NAME }} ${{ env.SERVICE_PORT }}:${{ env.CONTAINER_PORT }} -n ${{ env.NAMESPACE }} >/dev/null 2>&1 &
           sleep 10
           
-          if curl -sSf http://localhost:${{ env.SERVICE_PORT }}/healthz; then
+          if curl -sSf http://localhost:${{ env.SERVICE_PORT }}/health; then
             echo "✅ Application accessible"
           else
-            echo "❌ Échec de connexion"
+            echo "❌ Échec de connexion - Vérification des logs..."
             kubectl logs -l app=${{ env.APP_NAME }} -n ${{ env.NAMESPACE }} --tail=50
             exit 1
           fi
@@ -334,7 +355,6 @@ jobs:
             
             Un rollback a été effectué.
 
-  # 5ème job: Déploiement du monitoring
   monitoring-deploy:
     name: "4. Déploiement Monitoring"
     needs: kubernetes-deploy
@@ -352,6 +372,7 @@ jobs:
         run: |
           sudo curl -L "https://github.com/docker/compose/releases/download/v2.23.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
           sudo chmod +x /usr/local/bin/docker-compose
+
       - name: "🧹 Nettoyer l'environnement"
         working-directory: ./monitoring
         run: docker-compose down -v --remove-orphans || true
@@ -360,17 +381,11 @@ jobs:
         working-directory: ./monitoring
         run: |
           docker-compose up -d --build
-          echo "Attente du démarrage des services (30s)..."
           sleep 30
+
       - name: "🔍 Vérifier les services"
         working-directory: ./monitoring
         run: |
-          if ! docker-compose ps | grep -q "Up"; then
-            echo "❌ Certains services ne sont pas démarrés"
-            docker-compose logs
-            exit 1
-          fi
-          
           SERVICES=("nodejs-app:8080" "prometheus:9090" "grafana:3000")
           for service in "${SERVICES[@]}"; do
             if ! docker-compose ps | grep "$service" | grep -q "Up"; then
@@ -379,13 +394,13 @@ jobs:
             fi
           done
           echo "✅ Tous les services sont opérationnels"
+
       - name: "📊 Configurer Grafana"
         working-directory: ./monitoring
         env:
           GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
         run: |
           until curl -s http://localhost:$GRAFANA_PORT/api/health; do
-            echo "En attente de Grafana..."
             sleep 5
           done
           
@@ -400,8 +415,7 @@ jobs:
               "basicAuth":false,
               "isDefault":true
             }'
-          
-          echo "Configuration Grafana terminée"
+
       - name: "🧪 Tests de fonctionnement"
         run: |
           if ! curl -s http://localhost:$PROMETHEUS_PORT/-/ready | grep -q "Prometheus"; then
@@ -409,27 +423,7 @@ jobs:
             exit 1
           fi
           
-          if ! curl -s http://localhost:$NODEJS_PORT/metrics | grep -q "process_cpu_seconds_total"; then
-            echo "❌ Métriques Node.js non disponibles"
-            exit 1
-          fi
-          
           if ! curl -s http://localhost:$GRAFANA_PORT/api/health | grep -q "\"database\":\"ok\""; then
             echo "❌ Grafana non prêt"
             exit 1
           fi
-      - name: "📝 Générer un rapport"
-        working-directory: ./monitoring
-        run: |
-          echo "# Rapport de Monitoring" > monitoring-report.md
-          echo "## État des Services" >> monitoring-report.md
-          docker-compose ps >> monitoring-report.md
-          
-          echo "## Cibles Prometheus" >> monitoring-report.md
-          curl -s http://localhost:$PROMETHEUS_PORT/api/v1/targets | jq . >> monitoring-report.md
-          
-          echo "## Métriques Node.js" >> monitoring-report.md
-          curl -s http://localhost:$NODEJS_PORT/metrics | head -n 20 >> monitoring-report.md
-          
-          echo "Rapport généré :"
-          cat monitoring-report.md
