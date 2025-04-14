@@ -126,7 +126,7 @@ jobs:
       - name: "🛎️ Checkout du code"
         uses: actions/checkout@v4.1.1
 
-      - name: "🖥️ Installer K3s avec LoadBalancer"
+      - name: "🖥️ Installer K3s"
         run: |
           curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=${{ env.K3S_VERSION }} sh -s - --disable metrics-server --disable traefik
           sudo mkdir -p /mnt/data/postgres
@@ -136,20 +136,202 @@ jobs:
           sudo chown $(id -u):$(id -g) $HOME/.kube/config
           kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/master/deploy/local-path-storage.yaml
 
+      - name: "🚀 Initialiser le namespace"
+        run: kubectl create ns ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: "🗄️ Configurer le stockage PostgreSQL"
+        run: |
+          # Créer le PV
+          cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: PersistentVolume
+          metadata:
+            name: postgres-pv
+          spec:
+            storageClassName: local-path
+            capacity:
+              storage: 5Gi
+            accessModes:
+              - ReadWriteOnce
+            hostPath:
+              path: /mnt/data/postgres
+              type: DirectoryOrCreate
+            persistentVolumeReclaimPolicy: Retain
+          EOF
+          
+          # Créer le PVC
+          cat <<EOF | kubectl apply -n ${{ env.NAMESPACE }} -f -
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: postgres-pvc
+          spec:
+            storageClassName: local-path
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 5Gi
+            volumeName: postgres-pv
+          EOF
+          
+          # Vérifier le binding
+          kubectl wait --for=jsonpath='{.status.phase}'=Bound pvc/postgres-pvc -n ${{ env.NAMESPACE }} --timeout=120s
+
+      - name: "🔐 Configurer les secrets PostgreSQL"
+        run: |
+          cat <<EOF | kubectl apply -n ${{ env.NAMESPACE }} -f -
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: postgres-secret
+          type: Opaque
+          data:
+            POSTGRES_PASSWORD: $(echo -n "securepassword" | base64 -w0)
+            POSTGRES_USER: $(echo -n "postgres" | base64 -w0)
+            POSTGRES_DB: $(echo -n "gestion_trajet" | base64 -w0)
+          EOF
+
+      - name: "🐘 Déployer PostgreSQL"
+        run: |
+          cat <<EOF | kubectl apply -n ${{ env.NAMESPACE }} -f -
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: postgres
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: postgres
+            template:
+              metadata:
+                labels:
+                  app: postgres
+              spec:
+                containers:
+                - name: postgres
+                  image: postgres:13
+                  ports:
+                  - containerPort: 5432
+                  envFrom:
+                  - secretRef:
+                      name: postgres-secret
+                  volumeMounts:
+                  - mountPath: /var/lib/postgresql/data
+                    name: postgres-data
+                volumes:
+                - name: postgres-data
+                  persistentVolumeClaim:
+                    claimName: postgres-pvc
+          EOF
+          
+          # Service PostgreSQL
+          cat <<EOF | kubectl apply -n ${{ env.NAMESPACE }} -f -
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: db-host
+          spec:
+            selector:
+              app: postgres
+            ports:
+              - protocol: TCP
+                port: 5432
+                targetPort: 5432
+          EOF
+          
+          # Attendre que PostgreSQL soit prêt
+          kubectl rollout status deployment/postgres -n ${{ env.NAMESPACE }} --timeout=600s || {
+            echo "❌ Échec du déploiement PostgreSQL"
+            kubectl logs -l app=postgres -n ${{ env.NAMESPACE }} --tail=50
+            kubectl describe pod -l app=postgres -n ${{ env.NAMESPACE }}
+            exit 1
+          }
+
+      - name: "🔍 Vérifier PostgreSQL"
+        run: |
+          POD_NAME=$(kubectl get pods -n ${{ env.NAMESPACE }} -l app=postgres -o jsonpath='{.items[0].metadata.name}')
+          kubectl exec -n ${{ env.NAMESPACE }} $POD_NAME -- pg_isready -U postgres -h localhost --timeout=60 || {
+            echo "❌ PostgreSQL ne répond pas"
+            exit 1
+          }
+
+      - name: "🔧 Configurer l'application"
+        run: |
+          cat <<EOF | kubectl apply -n ${{ env.NAMESPACE }} -f -
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: app-config
+          data:
+            DB_HOST: "db-host"
+            DB_PORT: "5432"
+            DB_NAME: "gestion_trajet"
+          EOF
+          
+          cat <<EOF | kubectl apply -n ${{ env.NAMESPACE }} -f -
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: app-secret
+          type: Opaque
+          data:
+            DB_USER: $(echo -n "postgres" | base64 -w0)
+            DB_PASSWORD: $(echo -n "securepassword" | base64 -w0)
+          EOF
+
       - name: "🚀 Déployer l'application"
         run: |
-          # Créer le namespace
-          kubectl create ns ${{ env.NAMESPACE }} || true
+          cat <<EOF | kubectl apply -n ${{ env.NAMESPACE }} -f -
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: ${{ env.DEPLOYMENT_NAME }}
+          spec:
+            replicas: 3
+            selector:
+              matchLabels:
+                app: ${{ env.APP_NAME }}
+            template:
+              metadata:
+                labels:
+                  app: ${{ env.APP_NAME }}
+              spec:
+                containers:
+                - name: app
+                  image: ${{ secrets.DOCKER_USERNAME }}/gestion_trajet:latest
+                  ports:
+                  - containerPort: ${{ env.CONTAINER_PORT }}
+                  envFrom:
+                  - configMapRef:
+                      name: app-config
+                  - secretRef:
+                      name: app-secret
+                  resources:
+                    limits:
+                      cpu: "500m"
+                      memory: "512Mi"
+                    requests:
+                      cpu: "250m"
+                      memory: "256Mi"
+                  livenessProbe:
+                    httpGet:
+                      path: /health
+                      port: ${{ env.CONTAINER_PORT }}
+                    initialDelaySeconds: 45
+                    periodSeconds: 10
+                    failureThreshold: 3
+                  readinessProbe:
+                    httpGet:
+                      path: /health
+                      port: ${{ env.CONTAINER_PORT }}
+                    initialDelaySeconds: 20
+                    periodSeconds: 5
+                    failureThreshold: 3
+          EOF
           
-          # Déployer PostgreSQL avec les bons chemins
-          kubectl apply -f k8s/app/db/postgres-pv.yaml -n ${{ env.NAMESPACE }}
-          kubectl apply -f k8s/app/db/postgres-pvc.yaml -n ${{ env.NAMESPACE }}
-          kubectl apply -f k8s/app/db/postgres-deployment.yaml -n ${{ env.NAMESPACE }}
-          kubectl apply -f k8s/app/db/postgres-service.yaml -n ${{ env.NAMESPACE }}
-          
-          # Déployer l'application avec LoadBalancer
-          kubectl apply -f k8s/app/deployment.yaml -n ${{ env.NAMESPACE }}
-          
+          # Service LoadBalancer
           cat <<EOF | kubectl apply -n ${{ env.NAMESPACE }} -f -
           apiVersion: v1
           kind: Service
@@ -164,33 +346,61 @@ jobs:
               app: ${{ env.APP_NAME }}
           EOF
           
-          # Attendre que PostgreSQL soit prêt
-          kubectl rollout status deployment/postgres -n ${{ env.NAMESPACE }} --timeout=300s
-          kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }} --timeout=300s
+          kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }} --timeout=600s
 
       - name: "🔍 Tester le déploiement"
         run: |
-          # Attendre que le LoadBalancer soit prêt
           sleep 30
           
-          # Récupérer l'URL du service
-          kubectl get svc ${{ env.SERVICE_NAME }} -n ${{ env.NAMESPACE }} -o wide
-          
-          # Test de santé
           SERVICE_IP=$(kubectl get svc ${{ env.SERVICE_NAME }} -n ${{ env.NAMESPACE }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
           if [ -z "$SERVICE_IP" ]; then
-            SERVICE_IP="localhost"
+            echo "ℹ️ Utilisation du port-forward"
             kubectl port-forward svc/${{ env.SERVICE_NAME }} ${{ env.SERVICE_PORT }}:${{ env.CONTAINER_PORT }} -n ${{ env.NAMESPACE }} >/dev/null 2>&1 &
-            sleep 15
+            SERVICE_IP="localhost"
+            sleep 20
           fi
           
           if curl -sSf http://$SERVICE_IP:${{ env.SERVICE_PORT }}/health; then
             echo "✅ Application accessible"
           else
             echo "❌ Échec de connexion"
-            kubectl logs -l app=${{ env.APP_NAME }} -n ${{ env.NAMESPACE }}
+            kubectl logs -l app=${{ env.APP_NAME }} -n ${{ env.NAMESPACE }} --tail=50
+            kubectl describe pod -l app=${{ env.APP_NAME }} -n ${{ env.NAMESPACE }}
             exit 1
           fi
+
+      # Nouvelle étape: Rollback en cas d'échec
+      - name: "🔄 Rollback en cas d'échec"
+        if: failure()  # Exécuté seulement en cas d'échec
+        run: |
+          echo "=== Lancement du rollback ==="
+          kubectl rollout undo deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }}
+          echo "=== État après rollback ==="
+          kubectl get pods -n ${{ env.NAMESPACE }}
+          exit 1
+
+      # Nouvelle étape: Notification d'échec par email
+      - name: "📧 Notification d'échec"
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          from: ${{ env.EMAIL_FROM }}
+          to: ${{ env.YOUR_EMAIL }}
+          subject: "Échec de déploiement - ${{ env.APP_NAME }}"
+          body: |
+            Le déploiement a échoué.
+            
+            Détails:
+            - Commit: ${{ github.sha }}
+            - Application: ${{ env.APP_NAME }}
+            - Namespace: ${{ env.NAMESPACE }}
+            - Heure: $(date)
+            
+            Un rollback a été effectué.
 
   monitoring-deploy:
     name: "4. Monitoring"
@@ -202,12 +412,103 @@ jobs:
 
       - name: "🚀 Déployer Prometheus et Grafana"
         run: |
-          kubectl apply -f k8s/monitoring/ -n ${{ env.NAMESPACE }}
+          # Déployer Prometheus
+          cat <<EOF | kubectl apply -n ${{ env.NAMESPACE }} -f -
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: prometheus
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: prometheus
+            template:
+              metadata:
+                labels:
+                  app: prometheus
+              spec:
+                containers:
+                - name: prometheus
+                  image: prom/prometheus
+                  ports:
+                  - containerPort: 9090
+                  volumeMounts:
+                  - name: config
+                    mountPath: /etc/prometheus
+                volumes:
+                - name: config
+                  configMap:
+                    name: prometheus-config
+          EOF
+          
+          # Service Prometheus
+          cat <<EOF | kubectl apply -n ${{ env.NAMESPACE }} -f -
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: prometheus
+          spec:
+            selector:
+              app: prometheus
+            ports:
+              - protocol: TCP
+                port: 9090
+                targetPort: 9090
+          EOF
+          
+          # Déployer Grafana
+          cat <<EOF | kubectl apply -n ${{ env.NAMESPACE }} -f -
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: grafana
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: grafana
+            template:
+              metadata:
+                labels:
+                  app: grafana
+              spec:
+                containers:
+                - name: grafana
+                  image: grafana/grafana
+                  ports:
+                  - containerPort: 3000
+                  env:
+                  - name: GF_SECURITY_ADMIN_PASSWORD
+                    value: "${{ env.GRAFANA_ADMIN_PASSWORD }}"
+                  volumeMounts:
+                  - name: storage
+                    mountPath: /var/lib/grafana
+                volumes:
+                - name: storage
+                  emptyDir: {}
+          EOF
+          
+          # Service Grafana
+          cat <<EOF | kubectl apply -n ${{ env.NAMESPACE }} -f -
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: grafana
+          spec:
+            type: LoadBalancer
+            selector:
+              app: grafana
+            ports:
+              - protocol: TCP
+                port: 3000
+                targetPort: 3000
+          EOF
           
           # Attendre que Grafana soit prêt
           kubectl wait --for=condition=available deployment/grafana -n ${{ env.NAMESPACE }} --timeout=300s
           
-          # Configurer Grafana
+          # Configurer la source de données
           kubectl exec -n ${{ env.NAMESPACE }} deploy/grafana -- curl -X POST "http://localhost:3000/api/datasources" \
             -H "Content-Type: application/json" \
             -u "admin:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
