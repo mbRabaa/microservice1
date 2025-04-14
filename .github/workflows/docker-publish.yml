@@ -42,10 +42,13 @@ jobs:
 
       - name: 🔨 Construire l'image Docker
         run: |
-          docker build -t ${{ secrets.DOCKER_USERNAME }}/gestion_trajet:latest .
+          docker build \
+            -t ${{ secrets.DOCKER_USERNAME }}/gestion_trajet:${{ github.sha }} \
+            -t ${{ secrets.DOCKER_USERNAME }}/gestion_trajet:latest .
           
       - name: 🚀 Pousser l'image sur Docker Hub
         run: |
+          docker push ${{ secrets.DOCKER_USERNAME }}/gestion_trajet:${{ github.sha }}
           docker push ${{ secrets.DOCKER_USERNAME }}/gestion_trajet:latest
 
   setup-and-test:
@@ -233,6 +236,7 @@ jobs:
             kubectl get events -n ${{ env.NAMESPACE }} --sort-by='.lastTimestamp'
             exit 1
           fi
+
       - name: "🔐 Créer les secrets et configmaps"
         run: |
             # Créer la ConfigMap
@@ -242,9 +246,10 @@ jobs:
             
             # Créer le Secret
             kubectl create secret generic gestion-trajet-secret \
-              --from-literal=DB_USER=postgres \
-              --from-literal=DB_PASSWORD=securepassword \
+              --from-literal=DB_USER=${{ secrets.DB_USER }} \
+              --from-literal=DB_PASSWORD=${{ secrets.DB_PASSWORD }} \
               -n ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -    
+
       - name: "🐘 Déployer PostgreSQL"
         run: |
           # Appliquer les configurations PostgreSQL
@@ -299,41 +304,70 @@ jobs:
           echo "=== État des Volumes ==="
           kubectl get pv,pvc -n ${{ env.NAMESPACE }} || true
 
-      - name: "📧 Notification d'échec"
-        if: failure()
+  rollback-on-failure:
+    name: "🔄 Rollback Automatique"
+    needs: [kubernetes-deploy]
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: "🔐 Configurer l'accès kubectl"
+        run: |
+          mkdir -p $HOME/.kube
+          sudo cp /etc/rancher/k3s/k3s.yaml $HOME/.kube/config
+          sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+      - name: "⏪ Exécuter le rollback"
+        run: |
+          echo "=== Lancement du rollback ==="
+          # Rollback de l'application
+          kubectl rollout undo deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }} || true
+          
+          # Rollback de PostgreSQL si nécessaire
+          kubectl rollout undo deployment/postgres -n ${{ env.NAMESPACE }} || true
+          
+          echo "=== État après rollback ==="
+          kubectl get pods -n ${{ env.NAMESPACE }}
+          kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }}
+
+      - name: "📧 Notifier le rollback"
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
           server_port: 465
           username: ${{ secrets.EMAIL_USERNAME }}
           password: ${{ secrets.EMAIL_PASSWORD }}
-          from: ${{ env.EMAIL_FROM }}
+          from: ${{ env.EMAIL_FROM }}  # Cette ligne était manquante ou mal formatée
           to: ${{ env.YOUR_EMAIL }}
-          subject: "Échec de déploiement - ${{ env.APP_NAME }}"
+          subject: "Rollback effectué - ${{ env.APP_NAME }}"
           body: |
-            Le déploiement a échoué.
-            Commit: ${{ github.sha }}
-            Logs: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            Un rollback a été effectué suite à l'échec du déploiement.
+            
+            Détails:
+            - Commit: ${{ github.sha }}
+            - Workflow: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            - Statut des pods:
+            $(kubectl get pods -n ${{ env.NAMESPACE }})
 
-            monitoring-deploy:
-              name: "4. Déploiement Monitoring"
-              needs: kubernetes-deploy
-              runs-on: ubuntu-latest
-              steps:
-                - name: "🛎️ Checkout du code"
-                  uses: actions/checkout@v4
+  monitoring-deploy:
+    name: "4. Déploiement Monitoring"
+    needs: [kubernetes-deploy, rollback-on-failure]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: "🛎️ Checkout du code"
+        uses: actions/checkout@v4
           
-                - name: "🐳 Installer Docker Compose"
-                  run: |
-                    sudo curl -L "https://github.com/docker/compose/releases/download/v2.23.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-                    sudo chmod +x /usr/local/bin/docker-compose
-          
-                - name: "🚀 Démarrer le monitoring"
-                  working-directory: ./monitoring
-                  run: |
-                    docker-compose up -d --build
-                    sleep 30
-                    curl -X POST "http://localhost:3000/api/datasources" \
-                      -H "Content-Type: application/json" \
-                      -u "admin:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
-                      -d '{"name":"Prometheus","type":"prometheus","url":"http://prometheus:9090","access":"proxy"}'
+      - name: "🐳 Installer Docker Compose"
+        run: |
+          sudo curl -L "https://github.com/docker/compose/releases/download/v2.23.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          sudo chmod +x /usr/local/bin/docker-compose
+
+      - name: "🚀 Démarrer le monitoring"
+        working-directory: ./monitoring
+        run: |
+          docker-compose up -d --build
+          sleep 30
+          curl -X POST "http://localhost:3000/api/datasources" \
+            -H "Content-Type: application/json" \
+            -u "admin:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
+            -d '{"name":"Prometheus","type":"prometheus","url":"http://prometheus:9090","access":"proxy"}'
