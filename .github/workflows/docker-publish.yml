@@ -372,15 +372,15 @@ jobs:
           
           # Attendre que Grafana soit prêt avec un timeout plus long
           echo "En attente du démarrage de Grafana..."
-          for i in {1..60}; do
+          for i in {1..120}; do
             if curl -s http://localhost:3000/api/health | grep -q '"database":"ok"'; then
               echo "Grafana est prêt après $i essais"
               break
             fi
             sleep 5
-            echo "Essai $i/60 - En attente..."
-            if [ $i -eq 60 ]; then
-              echo "ERREUR: Timeout - Grafana n'a pas démarré correctement après 5 minutes"
+            echo "Essai $i/120 - En attente..."
+            if [ $i -eq 120 ]; then
+              echo "ERREUR: Timeout - Grafana n'a pas démarré correctement après 10 minutes"
               echo "=== Logs Grafana ==="
               docker-compose logs grafana
               echo "=== Logs Prometheus ==="
@@ -392,16 +392,17 @@ jobs:
       - name: "📊 Configurer Grafana"
         working-directory: ./monitoring
         run: |
-          # Vérification finale avant configuration
-          if ! curl -s http://localhost:3000/api/health | grep -q '"database":"ok"'; then
-            echo "ERREUR: Grafana n'est pas prêt pour la configuration"
-            exit 1
-          fi
-          
-          echo "Configuration de Grafana en cours..."
+          # Valider les dashboards JSON
+          for file in grafana-dashboards/*.json; do
+            echo "Validation du dashboard: $file"
+            if ! jq empty "$file"; then
+              echo "ERREUR: Fichier JSON invalide: $file"
+              exit 1
+            fi
+          done
           
           # Configurer la source de données Prometheus
-          echo "Ajout de la source de données Prometheus..."
+          echo "Configuration de la source de données Prometheus..."
           curl -X POST \
             -H "Content-Type: application/json" \
             -u "${{ env.GRAFANA_ADMIN_USER }}:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
@@ -412,26 +413,29 @@ jobs:
               "access":"proxy",
               "isDefault":true
             }' \
-            http://localhost:3000/api/datasources || echo "La source existe peut-être déjà"
+            http://localhost:3000/api/datasources
           
-          # Vérifier que la source a été ajoutée
-          echo "Vérification des sources de données..."
-          curl -s -u "${{ env.GRAFANA_ADMIN_USER }}:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
-            http://localhost:3000/api/datasources | jq .
-          
-          # Importer les dashboards
-          echo "Importation des dashboards..."
+          # Importer les dashboards avec gestion d'erreur améliorée
           for file in grafana-dashboards/*.json; do
-            echo "Importation de $file"
-            DASHBOARD=$(cat "$file" | jq 'del(.id)')
-            curl -X POST \
+            echo "Importation du dashboard: $file"
+            DASHBOARD=$(cat "$file" | jq 'del(.id, .isPublic)')
+            RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
               -H "Content-Type: application/json" \
               -u "${{ env.GRAFANA_ADMIN_USER }}:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
               -d "$DASHBOARD" \
-              http://localhost:3000/api/dashboards/db || echo "Échec de l'importation du dashboard $file"
+              http://localhost:3000/api/dashboards/db)
+            
+            if [ "$RESPONSE" != "200" ]; then
+              echo "ERREUR: Échec de l'importation du dashboard $file (Code: $RESPONSE)"
+              echo "Contenu du dashboard:"
+              echo "$DASHBOARD" | jq .
+              exit 1
+            else
+              echo "Dashboard importé avec succès: $file"
+            fi
           done
           
-          echo "Configuration terminée"
+          echo "Configuration Grafana terminée avec succès"
 
       - name: "🔄 Rollback en cas d'échec"
         if: failure()
