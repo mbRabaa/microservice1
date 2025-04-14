@@ -163,13 +163,13 @@ jobs:
         run: |
           kubectl delete -f k8s/app/ --ignore-not-found=true -n ${{ env.NAMESPACE }} || true
           kubectl delete pvc postgres-pvc -n ${{ env.NAMESPACE }} --ignore-not-found=true || true
-          kubectl delete pv postgres-pv -n ${{ env.NAMESPACE }} --ignore-not-found=true || true
+          kubectl delete pv postgres-pv --ignore-not-found=true || true
 
       - name: "🚀 Initialiser le namespace"
         run: |
           kubectl create ns ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: "🗄️ Déployer PostgreSQL"
+      - name: "🗄️ Configurer le stockage PostgreSQL"
         run: |
           # Créer le PV manuel
           cat <<EOF | kubectl apply -f -
@@ -177,7 +177,6 @@ jobs:
           kind: PersistentVolume
           metadata:
             name: postgres-pv
-            namespace: ${{ env.NAMESPACE }}
           spec:
             storageClassName: local-path
             capacity:
@@ -190,17 +189,53 @@ jobs:
             persistentVolumeReclaimPolicy: Retain
           EOF
           
-          # Créer le PVC
-          kubectl apply -f k8s/app/db/postgres-pvc.yaml -n ${{ env.NAMESPACE }}
+          # Créer le PVC avec référence explicite au PV
+          cat <<EOF | kubectl apply -n ${{ env.NAMESPACE }} -f -
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: postgres-pvc
+          spec:
+            storageClassName: local-path
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 5Gi
+            volumeName: postgres-pv
+          EOF
           
-          # Attendre que le PVC soit bound
+          # Vérification de la création des ressources
+          echo "=== PV créé ==="
+          kubectl get pv postgres-pv -o wide
+          echo "=== PVC créé ==="
+          kubectl get pvc postgres-pvc -n ${{ env.NAMESPACE }} -o wide
+
+      - name: "🔍 Vérifier le binding du PVC"
+        run: |
           echo "=== Attente du binding du PVC ==="
-          timeout 60s bash -c 'while [[ $(kubectl get pvc postgres-pvc -n ${{ env.NAMESPACE }} -o jsonpath="{.status.phase}") != "Bound" ]]; do
-            sleep 3
+          timeout 120s bash -c 'while [[ $(kubectl get pvc postgres-pvc -n ${{ env.NAMESPACE }} -o jsonpath="{.status.phase}") != "Bound" ]]; do
+            sleep 5
             echo "Statut PVC: $(kubectl get pvc postgres-pvc -n ${{ env.NAMESPACE }} -o jsonpath="{.status.phase}")"
+            echo "=== Détails PVC ==="
+            kubectl describe pvc postgres-pvc -n ${{ env.NAMESPACE }}
           done'
           
-          # Déployer PostgreSQL
+          PVC_STATUS=$(kubectl get pvc postgres-pvc -n ${{ env.NAMESPACE }} -o jsonpath="{.status.phase}")
+          if [ "$PVC_STATUS" != "Bound" ]; then
+            echo "❌ Échec du binding du PVC"
+            echo "=== Détails du PVC ==="
+            kubectl describe pvc postgres-pvc -n ${{ env.NAMESPACE }}
+            echo "=== Détails du PV ==="
+            kubectl describe pv postgres-pv
+            echo "=== Événements ==="
+            kubectl get events -n ${{ env.NAMESPACE }} --sort-by='.lastTimestamp'
+            exit 1
+          fi
+
+      - name: "🐘 Déployer PostgreSQL"
+        run: |
+          # Appliquer les configurations PostgreSQL
           kubectl apply -f k8s/app/db/postgres-deployment.yaml -n ${{ env.NAMESPACE }}
           kubectl apply -f k8s/app/db/postgres-service.yaml -n ${{ env.NAMESPACE }}
           
@@ -209,7 +244,333 @@ jobs:
 
       - name: "🔍 Valider la connexion PostgreSQL"
         run: |
-          echo "=== Test de connexion ==="
+          echo "=== Test de connexion PostgreSQL ==="
+          POD_NAME=$(kubectl get pods -n ${{ env.NAMESPACE }} -l app=postgres -o jsonpath='{.items[0].metadata.name}')
+          kubectl exec -n ${{ env.NAMESPACE }} $POD_NAME -- \
+            pg_isready -U $(kubectl get secret gestion-trajet-secret -n ${{ env.NAMESPACE }} -o jsonpath='{.data.DB_USER}' | base64 --decode) \
+            -h localhost -d $(kubectl get configmap gestion-trajet-config -n ${{ env.NAMESPACE }} -o jsonpath='{.data.DB_NAME}') --timeout=60 || {
+              echo "❌ Échec de connexion à PostgreSQL"
+              kubectl logs -n ${{ env.NAMESPACE }} $POD_NAME
+              exit 1
+            }
+
+      - name: "🚀 Déployer l'application"
+        run: |
+          kubectl apply -f k8s/app/deployment.yaml -n ${{ env.NAMESPACE }}
+          kubectl apply -f k8s/app/service.yaml -n ${{ env.NAMESPACE }}
+          kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }} --timeout=300s
+
+      - name: "🩺 Vérifier la santé de l'application"
+        run: |
+          echo "=== Test de l'application ==="
+          kubectl port-forward svc/${{ env.SERVICE_NAME }} 8080:${{ env.CONTAINER_PORT }} -n ${{ env.NAMESPACE }} >/dev/null 2>&1 &
+          sleep 15
+          if curl -sSf http://localhost:8080/health; then
+            echo "✅ Application fonctionnelle"
+          else
+            echo "❌ Échec de connexion à l'application"
+            kubectl logs -n ${{ env.NAMESPACE }} -l app=${{ env.APP_NAME }} --tail=100
+            exit 1
+          fi
+
+      - name: "📜 Journalisation en cas d'échec"
+        if: failure()
+        run: |
+          echo "=== Logs PostgreSQL ==="
+          kubectl logs -n ${{ env.NAMESPACE }} -l app=postgres --tail=100 || true
+          echo "=== Logs Application ==="
+          kubectl logs -n ${{ env.NAMESPACE }} -l app=${{ env.APP_NAME }} --tail=100 || true
+          echo "=== Événements ==="
+          kubectl get events -n ${{ env.NAMESPACE }} --sort-by='.lastTimestamp' || true
+          echo "=== Description des Pods ==="
+          kubectl describe pods -n ${{ env.NAMESPACE }} || true
+          echo "=== État des Volumes ==="
+          kubectl get pv,pvc -n ${{ env.NAMESPACE }} || true
+
+      - name: "📧 Notification d'échec"
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          from: ${{ env.EMAIL_FROM }}
+          to: ${{ env.YOUR_EMAIL }}
+          subject: "Échec de déploiement - ${{ env.APP_NAME }}"
+          body: |
+            Le déploiement a échoué.
+            Commit: ${{ github.sha }}
+            Logs: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+  monitoring-deploy:
+    name: "4. Déploiement Monitoring"
+    needs: kubernetes-deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: "🛎️ Checkout du code"
+        uses: actions/checkout@v4
+
+      - name: "🐳 Installer Docker Compose"
+        run: |
+          sudo curl -L "https://github.com/docker/compose/releases/download/v2.23.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          sudo chmod +x /usr/local/bin/docker-compose
+
+      - name: "🚀 Démarrer le monitoring"
+        working-directory: ./monitoring
+        run: |
+          docker-compose up -d --build
+          sleep 30
+          curl -X POST "http://localhost:3000/api/datasources" \
+            -H "Content-Type: application/json" \
+            -u "admin:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
+            -d '{"name":"Prometheus","type":"prometheus","url":"http://prometheus:9090","access":"proxy"}'name: CI/CD - Pipeline DevOps complet
+
+on:
+  push:
+    branches: [main]
+
+env:
+  # Configuration Kubernetes
+  K3S_VERSION: v1.26.5+k3s1
+  NAMESPACE: microservice-1
+  DOCKER_REGISTRY: docker.io
+  
+  # Configuration Application
+  APP_NAME: gestion-trajet
+  DEPLOYMENT_NAME: gestion-trajet-app
+  SERVICE_NAME: gestion-trajet-service
+  CONTAINER_PORT: 8080
+  SERVICE_PORT: 80
+  DB_SERVICE_NAME: db-host
+  
+  # Configuration Monitoring
+  PROMETHEUS_PORT: 9090
+  GRAFANA_PORT: 3000
+  GRAFANA_ADMIN_PASSWORD: rabaa123
+  
+  # Configuration SonarQube
+  SONAR_HOST_URL: http://localhost:9000
+  
+  # Configuration Email
+  YOUR_EMAIL: elmbarkirabea@gmail.com
+  EMAIL_FROM: "GitHub Actions <actions@github.com>"
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🛎️ Checkout du code
+        uses: actions/checkout@v3
+
+      - name: 🔑 Connexion à Docker Hub 
+        run: echo "${{ secrets.DOCKER_TOKEN }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+
+      - name: 🔨 Construire l'image Docker
+        run: |
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/gestion_trajet:latest .
+          
+      - name: 🚀 Pousser l'image sur Docker Hub
+        run: |
+          docker push ${{ secrets.DOCKER_USERNAME }}/gestion_trajet:latest
+
+  setup-and-test:
+    name: "1. Installation et Tests"
+    runs-on: ubuntu-latest
+    steps:
+      - name: "🛎️ Checkout du code"
+        uses: actions/checkout@v4.1.1
+
+      - name: "⎔ Configurer Node.js"
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: "📦 Installer les dépendances"
+        run: npm ci
+
+      - name: "🧪 Tests Unitaires"
+        run: npm run test:unit
+        env:
+          NODE_ENV: test
+
+      - name: "🔗 Tests d'Intégration"
+        run: npm run test:integration
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: testuser
+          DB_PASSWORD: testpass
+          NODE_ENV: test
+
+      - name: "🛠️ Build de l'application"
+        run: npm run build
+
+  sonarqube-analysis:
+    name: "2. Analyse SonarQube"
+    needs: setup-and-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: "🛎️ Checkout du code"
+        uses: actions/checkout@v4.1.1
+        with:
+          fetch-depth: 0
+
+      - name: "🐳 Démarrer SonarQube"
+        run: |
+          docker run -d \
+            --name sonarqube \
+            -p 9000:9000 \
+            -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true \
+            sonarqube:9.9.1-community
+          timeout 300 bash -c 'while ! curl -sSf ${{ env.SONAR_HOST_URL }}/api/system/status | grep -q "\"status\":\"UP\""; do
+            sleep 10
+            echo "En attente du démarrage..."
+          done'
+
+      - name: "🔑 Générer token SonarQube"
+        run: |
+          SONAR_TOKEN=$(curl -sS -u admin:admin \
+            -X POST "${{ env.SONAR_HOST_URL }}/api/user_tokens/generate" \
+            -d "name=github-action-$(date +%s)" \
+            | jq -r '.token')
+          echo "SONAR_TOKEN=$SONAR_TOKEN" >> $GITHUB_ENV
+          echo "::add-mask::$SONAR_TOKEN"
+
+      - name: "🔍 Exécuter analyse SonarQube"
+        uses: SonarSource/sonarqube-scan-action@v4
+        env:
+          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
+        with:
+          args: >
+            -Dsonar.projectKey=gestion-trajet-app
+            -Dsonar.sources=src
+            -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
+
+      - name: "🧹 Nettoyer SonarQube"
+        if: always()
+        run: docker rm -f sonarqube || true
+
+  kubernetes-deploy:
+    name: "3. Déploiement Kubernetes"
+    needs: sonarqube-analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: "🛎️ Checkout du code"
+        uses: actions/checkout@v4.1.1
+
+      - name: "🔐 Login Docker Hub"
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: "🖥️ Installer et configurer K3s"
+        run: |
+          # Installer K3s
+          curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=${{ env.K3S_VERSION }} sh -
+          
+          # Configurer le stockage local
+          sudo mkdir -p /mnt/data/postgres
+          sudo chmod 777 /mnt/data/postgres
+          
+          # Configurer l'accès kubectl
+          mkdir -p $HOME/.kube
+          sudo cp /etc/rancher/k3s/k3s.yaml $HOME/.kube/config
+          sudo chown $(id -u):$(id -g) $HOME/.kube/config
+          
+          # Appliquer le provisioner de stockage local
+          kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/master/deploy/local-path-storage.yaml
+
+      - name: "🧹 Nettoyer avant déploiement"
+        run: |
+          kubectl delete -f k8s/app/ --ignore-not-found=true -n ${{ env.NAMESPACE }} || true
+          kubectl delete pvc postgres-pvc -n ${{ env.NAMESPACE }} --ignore-not-found=true || true
+          kubectl delete pv postgres-pv --ignore-not-found=true || true
+
+      - name: "🚀 Initialiser le namespace"
+        run: |
+          kubectl create ns ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: "🗄️ Configurer le stockage PostgreSQL"
+        run: |
+          # Créer le PV manuel
+          cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: PersistentVolume
+          metadata:
+            name: postgres-pv
+          spec:
+            storageClassName: local-path
+            capacity:
+              storage: 5Gi
+            accessModes:
+              - ReadWriteOnce
+            hostPath:
+              path: /mnt/data/postgres
+              type: DirectoryOrCreate
+            persistentVolumeReclaimPolicy: Retain
+          EOF
+          
+          # Créer le PVC avec référence explicite au PV
+          cat <<EOF | kubectl apply -n ${{ env.NAMESPACE }} -f -
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: postgres-pvc
+          spec:
+            storageClassName: local-path
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 5Gi
+            volumeName: postgres-pv
+          EOF
+          
+          # Vérification de la création des ressources
+          echo "=== PV créé ==="
+          kubectl get pv postgres-pv -o wide
+          echo "=== PVC créé ==="
+          kubectl get pvc postgres-pvc -n ${{ env.NAMESPACE }} -o wide
+
+      - name: "🔍 Vérifier le binding du PVC"
+        run: |
+          echo "=== Attente du binding du PVC ==="
+          timeout 120s bash -c 'while [[ $(kubectl get pvc postgres-pvc -n ${{ env.NAMESPACE }} -o jsonpath="{.status.phase}") != "Bound" ]]; do
+            sleep 5
+            echo "Statut PVC: $(kubectl get pvc postgres-pvc -n ${{ env.NAMESPACE }} -o jsonpath="{.status.phase}")"
+            echo "=== Détails PVC ==="
+            kubectl describe pvc postgres-pvc -n ${{ env.NAMESPACE }}
+          done'
+          
+          PVC_STATUS=$(kubectl get pvc postgres-pvc -n ${{ env.NAMESPACE }} -o jsonpath="{.status.phase}")
+          if [ "$PVC_STATUS" != "Bound" ]; then
+            echo "❌ Échec du binding du PVC"
+            echo "=== Détails du PVC ==="
+            kubectl describe pvc postgres-pvc -n ${{ env.NAMESPACE }}
+            echo "=== Détails du PV ==="
+            kubectl describe pv postgres-pv
+            echo "=== Événements ==="
+            kubectl get events -n ${{ env.NAMESPACE }} --sort-by='.lastTimestamp'
+            exit 1
+          fi
+
+      - name: "🐘 Déployer PostgreSQL"
+        run: |
+          # Appliquer les configurations PostgreSQL
+          kubectl apply -f k8s/app/db/postgres-deployment.yaml -n ${{ env.NAMESPACE }}
+          kubectl apply -f k8s/app/db/postgres-service.yaml -n ${{ env.NAMESPACE }}
+          
+          # Attendre que PostgreSQL soit prêt
+          kubectl rollout status deployment/postgres -n ${{ env.NAMESPACE }} --timeout=300s
+
+      - name: "🔍 Valider la connexion PostgreSQL"
+        run: |
+          echo "=== Test de connexion PostgreSQL ==="
           POD_NAME=$(kubectl get pods -n ${{ env.NAMESPACE }} -l app=postgres -o jsonpath='{.items[0].metadata.name}')
           kubectl exec -n ${{ env.NAMESPACE }} $POD_NAME -- \
             pg_isready -U $(kubectl get secret gestion-trajet-secret -n ${{ env.NAMESPACE }} -o jsonpath='{.data.DB_USER}' | base64 --decode) \
