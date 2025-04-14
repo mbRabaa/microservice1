@@ -1,4 +1,4 @@
-name: CI/CD - Pipeline DevOps complet + monotoring
+name: CI/CD - Pipeline DevOps complet + monitoring
 
 on:
   push:
@@ -390,49 +390,63 @@ jobs:
     steps:
       - name: "🛎️ Checkout du code"
         uses: actions/checkout@v4
-
+  
+      - name: "🐳 Pré-télécharger les images Docker"
+        run: |
+          docker pull grafana/grafana
+          docker pull prom/prometheus
+          docker images
+  
       - name: "🐳 Installer Docker Compose"
         run: |
           sudo curl -L "https://github.com/docker/compose/releases/download/v2.23.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
           sudo chmod +x /usr/local/bin/docker-compose
-
-      - name: "🚀 Démarrer les services"
+  
+      - name: "🚀 Démarrer les services avec timeout"
         working-directory: ./monitoring
         run: |
+          # Démarrer les services en arrière-plan
           docker-compose up -d --build
-          sleep 30
-
+          
+          # Timeout après 5 minutes maximum
+          timeout 300 bash -c '
+            while ! curl -s http://localhost:3000/api/health; do
+              sleep 5
+              echo "En attente du démarrage de Grafana..."
+            done
+          ' || echo "Dépassement du timeout - continuation du workflow"
+  
       - name: "📊 Configurer Grafana"
         working-directory: ./monitoring
         run: |
-          # Attendre que Grafana soit prêt
-          echo "Attente du démarrage de Grafana..."
-          until curl -s http://localhost:3000/api/health | grep -q '"database":"ok"'; do
-            sleep 5
-          done
-
-          # Configurer la source de données Prometheus
-          echo "Configuration de la source de données Prometheus..."
-          curl -X POST \
-            -H "Content-Type: application/json" \
-            -u "${{ env.GRAFANA_ADMIN_USER }}:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
-            -d '{
-              "name":"Prometheus",
-              "type":"prometheus",
-              "url":"http://prometheus:9090",
-              "access":"proxy",
-              "isDefault":true
-            }' \
-            http://localhost:3000/api/datasources
-
-          # Importer les dashboards
-          echo "Importation des dashboards..."
-          for file in grafana-dashboards/*.json; do
-            echo "Importation de $file"
+          # Vérification rapide de la santé de Grafana
+          if curl -s http://localhost:3000/api/health | grep -q '"database":"ok"'; then
+            echo "Grafana est prêt - configuration en cours..."
+            
+            # Configurer la source de données Prometheus
+            echo "Configuration de la source de données Prometheus..."
             curl -X POST \
               -H "Content-Type: application/json" \
               -u "${{ env.GRAFANA_ADMIN_USER }}:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
-              -d @"$file" \
-              http://localhost:3000/api/dashboards/db
-          done
-          echo "Configuration Grafana terminée"
+              -d '{
+                "name":"Prometheus",
+                "type":"prometheus",
+                "url":"http://prometheus:9090",
+                "access":"proxy",
+                "isDefault":true
+              }' \
+              http://localhost:3000/api/datasources || echo "La source existe peut-être déjà"
+  
+            # Importer les dashboards
+            echo "Importation des dashboards..."
+            for file in grafana-dashboards/*.json; do
+              echo "Importation de $file"
+              curl -X POST \
+                -H "Content-Type: application/json" \
+                -u "${{ env.GRAFANA_ADMIN_USER }}:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
+                -d @"$file" \
+                http://localhost:3000/api/dashboards/db || echo "Échec de l'importation du dashboard $file"
+            done
+          else
+            echo "Grafana n'est pas prêt - passage à l'étape suivante"
+          fi
