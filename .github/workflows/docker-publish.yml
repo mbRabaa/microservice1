@@ -70,24 +70,49 @@ jobs:
       - name: "🛠️ Build de l'application"
         run: npm run build
 
-  sonarqube-analysis:
+sonarqube-analysis:
     name: "2. Analyse SonarQube"
     needs: setup-and-test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: "🛎️ Checkout du code"
         uses: actions/checkout@v4.1.1
+        with:
+          fetch-depth: 0
 
       - name: "🐳 Démarrer SonarQube"
         run: |
-          docker run -d -p 9000:9000 --name sonarqube sonarqube:9.9.1-community
-          sleep 60
-
+          docker run -d \
+            --name sonarqube \
+            -p 9000:9000 \
+            -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true \
+            sonarqube:9.9.1-community
+          timeout 300 bash -c 'while ! curl -sSf ${{ env.SONAR_HOST_URL }}/api/system/status | grep -q "\"status\":\"UP\""; do
+            sleep 10
+            echo "En attente du démarrage..."
+          done'
+      - name: "🔑 Générer token SonarQube"
+        run: |
+          SONAR_TOKEN=$(curl -sS -u admin:admin \
+            -X POST "${{ env.SONAR_HOST_URL }}/api/user_tokens/generate" \
+            -d "name=github-action-$(date +%s)" \
+            | jq -r '.token')
+          echo "SONAR_TOKEN=$SONAR_TOKEN" >> $GITHUB_ENV
+          echo "::add-mask::$SONAR_TOKEN"
       - name: "🔍 Exécuter analyse SonarQube"
-        uses: SonarSource/sonarqube-scan-action@master
+        uses: SonarSource/sonarqube-scan-action@v4
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: http://localhost:9000
+          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
+        with:
+          args: >
+            -Dsonar.projectKey=gestion-trajet-app
+            -Dsonar.sources=src
+            -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
+      - name: "🧹 Nettoyer SonarQube"
+        if: always()
+        run: docker rm -f sonarqube || true
 
   kubernetes-deploy:
     name: "3. Déploiement Kubernetes"
