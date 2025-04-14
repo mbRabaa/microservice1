@@ -21,6 +21,7 @@ env:
   # Configuration Monitoring
   PROMETHEUS_PORT: 9090
   GRAFANA_PORT: 3000
+  GRAFANA_ADMIN_PASSWORD: rabaa123
   
   # Configuration SonarQube
   SONAR_HOST_URL: http://localhost:9000
@@ -140,8 +141,11 @@ jobs:
           # Créer le namespace
           kubectl create ns ${{ env.NAMESPACE }} || true
           
-          # Déployer PostgreSQL
-          kubectl apply -f k8s/postgres/ -n ${{ env.NAMESPACE }}
+          # Déployer PostgreSQL avec les bons chemins
+          kubectl apply -f k8s/app/db/postgres-pv.yaml -n ${{ env.NAMESPACE }}
+          kubectl apply -f k8s/app/db/postgres-pvc.yaml -n ${{ env.NAMESPACE }}
+          kubectl apply -f k8s/app/db/postgres-deployment.yaml -n ${{ env.NAMESPACE }}
+          kubectl apply -f k8s/app/db/postgres-service.yaml -n ${{ env.NAMESPACE }}
           
           # Déployer l'application avec LoadBalancer
           kubectl apply -f k8s/app/deployment.yaml -n ${{ env.NAMESPACE }}
@@ -160,6 +164,8 @@ jobs:
               app: ${{ env.APP_NAME }}
           EOF
           
+          # Attendre que PostgreSQL soit prêt
+          kubectl rollout status deployment/postgres -n ${{ env.NAMESPACE }} --timeout=300s
           kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }} --timeout=300s
 
       - name: "🔍 Tester le déploiement"
@@ -186,121 +192,23 @@ jobs:
             exit 1
           fi
 
-          monitoring-deploy:
-            name: "4. Déploiement Monitoring"
-            needs: docker-deploy
-            runs-on: ubuntu-latest
-            timeout-minutes: 30  # Augmentation du timeout global
-            
-            steps:
-              - name: "🛎️ Checkout du code"
-                uses: actions/checkout@v4.1.1
-            
-              - name: "📦 Installer Docker Compose"
-                run: |
-                  sudo curl -L "https://github.com/docker/compose/releases/download/v2.23.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-                  sudo chmod +x /usr/local/bin/docker-compose
-                  docker-compose --version
-            
-              - name: "🧹 Nettoyer l'environnement"
-                working-directory: ./monitoring
-                run: |
-                  docker-compose down -v --remove-orphans || true
-                  sudo rm -rf grafana-storage || true
-                  mkdir -p grafana-storage
-                  chmod -R 777 grafana-storage  # Assure les permissions
-              - name: "🚀 Démarrer les services"
-                working-directory: ./monitoring
-                env:
-                  GF_INSTALL_PLUGINS: ""  # Désactive les plugins par défaut
-                run: |
-                  docker-compose up -d
-                  echo "Attente initiale (30s) pour l'initialisation..."
-                  sleep 30
-              - name: "🔍 Vérifier l'état des conteneurs"
-                working-directory: ./monitoring
-                run: |
-                  if docker-compose ps | grep -v "Up" | grep -q -v "STATUS"; then
-                    echo "❌ Certains services ne sont pas démarrés:"
-                    docker-compose ps
-                    docker-compose logs
-                    exit 1
-                  fi
-                  echo "✅ Tous les services sont en cours d'exécution"
-              - name: "⏳ Attendre Grafana (version améliorée)"
-                working-directory: ./monitoring
-                run: |
-                  echo "Attente du démarrage de Grafana..."
-                  start_time=$(date +%s)
-                  timeout=1200  # 20 minutes
-                  
-                  while :; do
-                    # Vérifier si le conteneur est en cours d'exécution
-                    if ! docker-compose ps | grep grafana | grep -q "Up"; then
-                      echo "❌ Le conteneur Grafana s'est arrêté"
-                      docker-compose logs grafana
-                      exit 1
-                    fi
-                    
-                    # Vérifier la santé via l'API
-                    if curl -s http://localhost:3000/api/health | grep -q "\"database\":\"ok\""; then
-                      echo "✅ Grafana prêt après $(($(date +%s) - start_time)) secondes"
-                      break
-                    fi
-                    
-                    # Vérifier aussi le endpoint de login
-                    if curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/login | grep -q 200; then
-                      echo "✅ Grafana login page accessible après $(($(date +%s) - start_time)) secondes"
-                      break
-                    fi
-                    
-                    # Timeout
-                    if [ $(($(date +%s) - start_time)) -ge $timeout ]; then
-                      echo "❌ Timeout - Grafana n'a pas démarré après 20 minutes"
-                      docker-compose logs grafana
-                      exit 1
-                    fi
-                    
-                    echo "En attente... ($(($(date +%s) - start_time))s)"
-                    sleep 10
-                  done
-              - name: "📈 Configurer Grafana"
-                working-directory: ./monitoring
-                run: |
-                  echo "Configuration de la source de données..."
-                  for attempt in {1..5}; do
-                    response=$(curl -s -o /dev/null -w "%{http_code}" \
-                      -X POST "http://localhost:3000/api/datasources" \
-                      -H "Content-Type: application/json" \
-                      -u "admin:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
-                      -d '{
-                        "name":"Prometheus",
-                        "type":"prometheus",
-                        "url":"http://prometheus:9090",
-                        "access":"proxy",
-                        "basicAuth":false
-                      }')
-                    
-                    if [ "$response" -eq 200 ]; then
-                      echo "✅ Configuration réussie"
-                      exit 0
-                    elif [ "$response" -eq 409 ]; then
-                      echo "ℹ️ La source existe déjà"
-                      exit 0
-                    else
-                      echo "⚠️ Échec tentative $attempt (HTTP $response)"
-                      sleep 15
-                    fi
-                  done
-                  echo "❌ Échec après 5 tentatives"
-                  exit 1
-              - name: "📝 Générer rapport"
-                working-directory: ./monitoring
-                run: |
-                  echo "# Rapport de Monitoring" > report.md
-                  echo "## État des services" >> report.md
-                  docker-compose ps >> report.md
-                  echo "## Métriques NGINX" >> report.md
-                  curl -s http://localhost:9113/metrics | head -n 20 >> report.md
-                  echo "## Targets Prometheus" >> report.md
-                  curl -s http://localhost:9090/api/v1/targets | jq . >> report.md
+  monitoring-deploy:
+    name: "4. Monitoring"
+    needs: kubernetes-deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: "🛎️ Checkout du code"
+        uses: actions/checkout@v4
+
+      - name: "🚀 Déployer Prometheus et Grafana"
+        run: |
+          kubectl apply -f k8s/monitoring/ -n ${{ env.NAMESPACE }}
+          
+          # Attendre que Grafana soit prêt
+          kubectl wait --for=condition=available deployment/grafana -n ${{ env.NAMESPACE }} --timeout=300s
+          
+          # Configurer Grafana
+          kubectl exec -n ${{ env.NAMESPACE }} deploy/grafana -- curl -X POST "http://localhost:3000/api/datasources" \
+            -H "Content-Type: application/json" \
+            -u "admin:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
+            -d '{"name":"Prometheus","type":"prometheus","url":"http://prometheus:9090","access":"proxy","isDefault":true}'
