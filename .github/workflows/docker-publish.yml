@@ -42,13 +42,10 @@ jobs:
 
       - name: 🔨 Construire l'image Docker
         run: |
-          docker build \
-            -t ${{ secrets.DOCKER_USERNAME }}/gestion_trajet:${{ github.sha }} \
-            -t ${{ secrets.DOCKER_USERNAME }}/gestion_trajet:latest .
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/gestion_trajet:latest .
           
       - name: 🚀 Pousser l'image sur Docker Hub
         run: |
-          docker push ${{ secrets.DOCKER_USERNAME }}/gestion_trajet:${{ github.sha }}
           docker push ${{ secrets.DOCKER_USERNAME }}/gestion_trajet:latest
 
   setup-and-test:
@@ -246,8 +243,8 @@ jobs:
             
             # Créer le Secret
             kubectl create secret generic gestion-trajet-secret \
-              --from-literal=DB_USER=${{ secrets.DB_USER }} \
-              --from-literal=DB_PASSWORD=${{ secrets.DB_PASSWORD }} \
+              --from-literal=DB_USER=postgres \
+              --from-literal=DB_PASSWORD=securepassword \
               -n ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -    
 
       - name: "🐘 Déployer PostgreSQL"
@@ -277,32 +274,25 @@ jobs:
           kubectl apply -f k8s/app/service.yaml -n ${{ env.NAMESPACE }}
           kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }} --timeout=300s
 
-      - name: "🩺 Vérifier la santé de l'application"
+      - name: "🔍 Vérifier le déploiement"
         run: |
-          echo "=== Test de l'application ==="
-          kubectl port-forward svc/${{ env.SERVICE_NAME }} 8080:${{ env.CONTAINER_PORT }} -n ${{ env.NAMESPACE }} >/dev/null 2>&1 &
-          sleep 15
-          if curl -sSf http://localhost:8080/health; then
-            echo "✅ Application fonctionnelle"
+          echo "=== Ressources déployées ==="
+          kubectl get all -n ${{ env.NAMESPACE }}
+          
+          echo "=== Détails du déploiement ==="
+          kubectl describe deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }}
+          
+          echo "=== Test de connectivité ==="
+          kubectl port-forward svc/${{ env.SERVICE_NAME }} ${{ env.SERVICE_PORT }}:${{ env.CONTAINER_PORT }} -n ${{ env.NAMESPACE }} >/dev/null 2>&1 &
+          sleep 10
+          
+          if curl -sSf http://localhost:${{ env.SERVICE_PORT }}/healthz; then
+            echo "✅ Application accessible"
           else
-            echo "❌ Échec de connexion à l'application"
-            kubectl logs -n ${{ env.NAMESPACE }} -l app=${{ env.APP_NAME }} --tail=100
+            echo "❌ Échec de connexion"
+            kubectl logs -l app=${{ env.APP_NAME }} -n ${{ env.NAMESPACE }} --tail=50
             exit 1
           fi
-
-      - name: "📜 Journalisation en cas d'échec"
-        if: failure()
-        run: |
-          echo "=== Logs PostgreSQL ==="
-          kubectl logs -n ${{ env.NAMESPACE }} -l app=postgres --tail=100 || true
-          echo "=== Logs Application ==="
-          kubectl logs -n ${{ env.NAMESPACE }} -l app=${{ env.APP_NAME }} --tail=100 || true
-          echo "=== Événements ==="
-          kubectl get events -n ${{ env.NAMESPACE }} --sort-by='.lastTimestamp' || true
-          echo "=== Description des Pods ==="
-          kubectl describe pods -n ${{ env.NAMESPACE }} || true
-          echo "=== État des Volumes ==="
-          kubectl get pv,pvc -n ${{ env.NAMESPACE }} || true
 
   rollback-on-failure:
     name: "🔄 Rollback Automatique"
@@ -319,55 +309,127 @@ jobs:
       - name: "⏪ Exécuter le rollback"
         run: |
           echo "=== Lancement du rollback ==="
-          # Rollback de l'application
-          kubectl rollout undo deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }} || true
-          
-          # Rollback de PostgreSQL si nécessaire
-          kubectl rollout undo deployment/postgres -n ${{ env.NAMESPACE }} || true
-          
+          kubectl rollout undo deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }}
           echo "=== État après rollback ==="
           kubectl get pods -n ${{ env.NAMESPACE }}
-          kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }} -n ${{ env.NAMESPACE }}
 
-      - name: "📧 Notifier le rollback"
+      - name: "📧 Notification d'échec"
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
           server_port: 465
           username: ${{ secrets.EMAIL_USERNAME }}
           password: ${{ secrets.EMAIL_PASSWORD }}
-          from: ${{ env.EMAIL_FROM }}  # Cette ligne était manquante ou mal formatée
+          from: ${{ env.EMAIL_FROM }}
           to: ${{ env.YOUR_EMAIL }}
-          subject: "Rollback effectué - ${{ env.APP_NAME }}"
+          subject: "Échec de déploiement - ${{ env.APP_NAME }}"
           body: |
-            Un rollback a été effectué suite à l'échec du déploiement.
+            Le déploiement a échoué.
             
             Détails:
             - Commit: ${{ github.sha }}
-            - Workflow: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-            - Statut des pods:
-            $(kubectl get pods -n ${{ env.NAMESPACE }})
+            - Application: ${{ env.APP_NAME }}
+            - Namespace: ${{ env.NAMESPACE }}
+            - Heure: $(date)
+            
+            Un rollback a été effectué.
 
+  # 5ème job: Déploiement du monitoring
   monitoring-deploy:
     name: "4. Déploiement Monitoring"
-    needs: [kubernetes-deploy, rollback-on-failure]
-    if: always()
+    needs: kubernetes-deploy
     runs-on: ubuntu-latest
+    env:
+      PROMETHEUS_PORT: 9090
+      GRAFANA_PORT: 3000
+      NODEJS_PORT: 8081
+      
     steps:
       - name: "🛎️ Checkout du code"
         uses: actions/checkout@v4
-          
+
       - name: "🐳 Installer Docker Compose"
         run: |
           sudo curl -L "https://github.com/docker/compose/releases/download/v2.23.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
           sudo chmod +x /usr/local/bin/docker-compose
+      - name: "🧹 Nettoyer l'environnement"
+        working-directory: ./monitoring
+        run: docker-compose down -v --remove-orphans || true
 
       - name: "🚀 Démarrer le monitoring"
         working-directory: ./monitoring
         run: |
           docker-compose up -d --build
+          echo "Attente du démarrage des services (30s)..."
           sleep 30
-          curl -X POST "http://localhost:3000/api/datasources" \
+      - name: "🔍 Vérifier les services"
+        working-directory: ./monitoring
+        run: |
+          if ! docker-compose ps | grep -q "Up"; then
+            echo "❌ Certains services ne sont pas démarrés"
+            docker-compose logs
+            exit 1
+          fi
+          
+          SERVICES=("nodejs-app:8080" "prometheus:9090" "grafana:3000")
+          for service in "${SERVICES[@]}"; do
+            if ! docker-compose ps | grep "$service" | grep -q "Up"; then
+              echo "❌ Service $service non démarré"
+              exit 1
+            fi
+          done
+          echo "✅ Tous les services sont opérationnels"
+      - name: "📊 Configurer Grafana"
+        working-directory: ./monitoring
+        env:
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+        run: |
+          until curl -s http://localhost:$GRAFANA_PORT/api/health; do
+            echo "En attente de Grafana..."
+            sleep 5
+          done
+          
+          curl -X POST "http://localhost:$GRAFANA_PORT/api/datasources" \
             -H "Content-Type: application/json" \
-            -u "admin:${{ env.GRAFANA_ADMIN_PASSWORD }}" \
-            -d '{"name":"Prometheus","type":"prometheus","url":"http://prometheus:9090","access":"proxy"}'
+            -u "admin:$GRAFANA_ADMIN_PASSWORD" \
+            -d '{
+              "name":"Prometheus",
+              "type":"prometheus",
+              "url":"http://prometheus:9090",
+              "access":"proxy",
+              "basicAuth":false,
+              "isDefault":true
+            }'
+          
+          echo "Configuration Grafana terminée"
+      - name: "🧪 Tests de fonctionnement"
+        run: |
+          if ! curl -s http://localhost:$PROMETHEUS_PORT/-/ready | grep -q "Prometheus"; then
+            echo "❌ Prometheus non prêt"
+            exit 1
+          fi
+          
+          if ! curl -s http://localhost:$NODEJS_PORT/metrics | grep -q "process_cpu_seconds_total"; then
+            echo "❌ Métriques Node.js non disponibles"
+            exit 1
+          fi
+          
+          if ! curl -s http://localhost:$GRAFANA_PORT/api/health | grep -q "\"database\":\"ok\""; then
+            echo "❌ Grafana non prêt"
+            exit 1
+          fi
+      - name: "📝 Générer un rapport"
+        working-directory: ./monitoring
+        run: |
+          echo "# Rapport de Monitoring" > monitoring-report.md
+          echo "## État des Services" >> monitoring-report.md
+          docker-compose ps >> monitoring-report.md
+          
+          echo "## Cibles Prometheus" >> monitoring-report.md
+          curl -s http://localhost:$PROMETHEUS_PORT/api/v1/targets | jq . >> monitoring-report.md
+          
+          echo "## Métriques Node.js" >> monitoring-report.md
+          curl -s http://localhost:$NODEJS_PORT/metrics | head -n 20 >> monitoring-report.md
+          
+          echo "Rapport généré :"
+          cat monitoring-report.md
