@@ -21,7 +21,7 @@ env:
   # Configuration Monitoring
   PROMETHEUS_PORT: 9090
   GRAFANA_PORT: 3000
-  GRAFANA_ADMIN_PASSWORD: rabaa123
+
   
   # Configuration SonarQube
   SONAR_HOST_URL: http://localhost:9000
